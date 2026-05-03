@@ -54,7 +54,7 @@ export default function Sync({
           {pendingEntries.length > 0 && (
             <button
               onClick={handleClearAll}
-              className="text-[12px] font-medium text-[#888] dark:text-white/40 bg-[#f5f2ee] dark:bg-white/10 hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-600 dark:hover:text-red-400 px-4 py-2 rounded-xl transition-colors"
+              className="text-[12px] font-medium text-gray-500 dark:text-white/40 bg-gray-100 dark:bg-white/10 hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-600 dark:hover:text-red-400 px-4 py-2 rounded-xl transition-colors"
             >
               Clear All
             </button>
@@ -63,7 +63,7 @@ export default function Sync({
             onClick={handleSyncNow}
             disabled={syncing || !online}
             title={!online ? 'You are offline' : undefined}
-            className="flex items-center gap-1.5 text-[12px] font-medium bg-white dark:bg-white/10 text-[#555] dark:text-white/50 px-4 py-2 rounded-xl hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 text-[12px] font-medium bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 px-4 py-2 rounded-xl hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RiRefreshLine size={13} className={syncing ? 'animate-spin' : ''} />
             {syncing ? 'Syncing...' : 'Sync Now'}
@@ -82,8 +82,8 @@ export default function Sync({
             </div>
           ) : (
             pendingEntries.map(([key, item]) => (
-              <div key={key} className="bg-white dark:bg-white/5 rounded-xl px-3.5 py-3 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-100 dark:bg-white/10 flex-shrink-0 flex items-center justify-center">
+              <div key={key} className="bg-gray-100 dark:bg-white/10 rounded-xl px-3.5 py-3 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-200 dark:bg-white/10 flex-shrink-0 flex items-center justify-center">
                   {item.imagePreview
                     ? <img src={item.imagePreview} alt="" className="w-full h-full object-cover" />
                     : item.product?.localPreview || item.product?._raw?.images?.[0]?.src
@@ -146,9 +146,9 @@ export default function Sync({
 
 function ActionBadge({ action, hasImage }) {
   const map = {
-    update: { label: 'Update', cls: 'bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400',       Icon: RiEditLine       },
+    update: { label: 'Update', cls: 'bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400',            Icon: RiEditLine       },
     create: { label: 'Create', cls: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400', Icon: RiAddLine        },
-    delete: { label: 'Delete', cls: 'bg-red-50 dark:bg-red-950/50 text-red-500 dark:text-red-400',            Icon: RiDeleteBin2Line },
+    delete: { label: 'Delete', cls: 'bg-red-50 dark:bg-red-950/50 text-red-500 dark:text-red-400',                Icon: RiDeleteBin2Line },
   };
   const { label, cls, Icon } = map[action] || { label: action, cls: 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40', Icon: RiInformationLine };
   return (
@@ -169,7 +169,7 @@ function LogRow({ entry }) {
   const styles = {
     ok:   { bg: 'bg-emerald-50 dark:bg-emerald-950/40',  text: 'text-emerald-700 dark:text-emerald-400', sub: 'text-emerald-500 dark:text-emerald-500', Icon: RiCheckboxCircleLine },
     err:  { bg: 'bg-red-50 dark:bg-red-950/40',          text: 'text-red-700 dark:text-red-400',         sub: 'text-red-400',                           Icon: RiCloseCircleLine    },
-    info: { bg: 'bg-[#f5f2ee] dark:bg-white/5',          text: 'text-[#555] dark:text-white/60',         sub: 'text-[#aaa] dark:text-white/25',          Icon: RiInformationLine    },
+    info: { bg: 'bg-gray-100 dark:bg-white/10',          text: 'text-[#555] dark:text-white/60',         sub: 'text-[#aaa] dark:text-white/25',          Icon: RiInformationLine    },
   };
   const isUpload = entry.msg?.toLowerCase().includes('upload');
   const { bg, text, sub, Icon } = styles[entry.type] || styles.info;

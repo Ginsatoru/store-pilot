@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import StatsBar from '../components/StatsBar.jsx';
 import ProductsTable from '../components/ProductsTable.jsx';
 import ProductForm from '../components/ProductForm.jsx';
+import ImportModal from '../components/ImportModal.jsx';
 
 function computeStats(products) {
   const total     = products.length;
@@ -35,6 +36,7 @@ export default function Products({
 }) {
   const [search, setSearch]           = useState('');
   const [showForm, setShowForm]       = useState(false);
+  const [showImport, setShowImport]   = useState(false);
   const [editProduct, setEditProduct] = useState(null);
 
   const filtered = useMemo(() => {
@@ -69,6 +71,26 @@ export default function Products({
     onQueueChange({ action: 'delete', product });
   };
 
+  const handleImport = (rows) => {
+    const colors = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
+    rows.forEach((row) => {
+      const local = {
+        id:           `import_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name:         row.name,
+        category:     row.category || 'Uncategorized',
+        price:        row.price || 0,
+        stock:        row.stock || 0,
+        date:         row.date || new Date().toISOString(),
+        status:       row.status || 'Draft',
+        color:        colors[Math.floor(Math.random() * colors.length)],
+        localPreview: null,
+        _pending:     true,
+        _raw:         {},
+      };
+      onQueueChange({ action: 'create', product: local, imageFile: null, imagePreview: null });
+    });
+  };
+
   const pendingCount = Object.keys(pendingQueue || {}).length;
 
   return (
@@ -100,6 +122,7 @@ export default function Products({
         onRefresh={onRefresh}
         onAddNew={handleAddNew}
         onRowClick={handleEdit}
+        onImport={() => setShowImport(true)}
       />
 
       {showForm && (
@@ -109,6 +132,13 @@ export default function Products({
           onDelete={editProduct ? () => handleDelete(editProduct) : null}
           onClose={() => setShowForm(false)}
           saving={false}
+        />
+      )}
+
+      {showImport && (
+        <ImportModal
+          onImport={handleImport}
+          onClose={() => setShowImport(false)}
         />
       )}
     </div>

@@ -97,7 +97,7 @@ function OrderDetailPanel({ order, onClose }) {
             { label: 'Items',    value: order.items },
             { label: 'Customer', value: order.billing_name },
           ].map(({ label, value }) => (
-            <div key={label} className="bg-[#f5f4ef] dark:bg-white/5 rounded-xl px-3 py-2">
+            <div key={label} className="bg-gray-100 dark:bg-white/10 rounded-xl px-3 py-2">
               <p className="text-[10px] font-semibold text-[#aaa] dark:text-white/30 uppercase tracking-wider">{label}</p>
               <p className="text-[12px] font-medium text-[#1a1a1a] dark:text-white/80 mt-0.5 truncate">{value}</p>
             </div>
@@ -124,7 +124,7 @@ function OrderDetailPanel({ order, onClose }) {
         {order._raw?.billing && (
           <div>
             <p className="text-[10px] font-semibold text-[#aaa] dark:text-white/30 uppercase tracking-wider mb-1.5">Billing Address</p>
-            <div className="bg-[#f5f4ef] dark:bg-white/5 rounded-xl px-3 py-2 text-[11px] text-[#555] dark:text-white/50 leading-relaxed">
+            <div className="bg-gray-100 dark:bg-white/10 rounded-xl px-3 py-2 text-[11px] text-[#555] dark:text-white/50 leading-relaxed">
               {[
                 order._raw.billing.address_1,
                 order._raw.billing.address_2,
@@ -144,7 +144,7 @@ function OrderDetailPanel({ order, onClose }) {
 function StatCard({ label, value, icon: Icon, accent = 'text-[#1a1a1a] dark:text-white/80' }) {
   return (
     <div className="flex-1 bg-white dark:bg-white/5 rounded-xl px-4 py-3 flex items-center gap-3">
-      <div className="w-8 h-8 rounded-lg bg-[#f5f4ef] dark:bg-white/10 flex items-center justify-center flex-shrink-0">
+      <div className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-white/10 flex items-center justify-center flex-shrink-0">
         <Icon size={14} className="text-[#888] dark:text-white/40" />
       </div>
       <div>

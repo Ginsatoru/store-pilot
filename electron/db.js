@@ -36,6 +36,12 @@ function initSchema() {
       data        TEXT NOT NULL,
       updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS profile (
+      id          INTEGER PRIMARY KEY CHECK (id = 1),
+      data        TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
   `);
 }
 
@@ -138,8 +144,28 @@ function saveOrders(orders) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// ── Profile ───────────────────────────────────────────────────────────────────
+function loadProfile() {
+  try {
+    const row = getDb().prepare('SELECT data FROM profile WHERE id = 1').get();
+    return { ok: true, data: row ? JSON.parse(row.data) : null };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function saveProfile(data) {
+  try {
+    getDb().prepare(`
+      INSERT INTO profile (id, data, updated_at)
+      VALUES (1, ?, strftime('%s','now'))
+      ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+    `).run(JSON.stringify(data));
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 module.exports = {
   loadProducts, saveProducts, clearProducts,
   loadQueue, upsertQueueItem, deleteQueueItem, clearQueue,
   loadOrders, saveOrders,
+  loadProfile, saveProfile,
 };

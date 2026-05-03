@@ -13,6 +13,7 @@ import {
   RiUserLine,
   RiWifiOffLine,
   RiWifiLine,
+  RiErrorWarningLine,
 } from 'react-icons/ri';
 
 const NAV_ITEMS = [
@@ -25,8 +26,9 @@ const NAV_ITEMS = [
 ];
 
 const statusStyles = {
-  offline: 'text-red-600 bg-red-50 dark:bg-red-950 dark:text-red-400',
-  online:  'text-green-600 bg-green-50 dark:bg-green-950 dark:text-green-400',
+  offline:  'text-red-600 bg-red-50 dark:bg-red-950 dark:text-red-400',
+  online:   'text-green-600 bg-green-50 dark:bg-green-950 dark:text-green-400',
+  license:  'text-orange-600 bg-orange-50 dark:bg-orange-950 dark:text-orange-400',
 };
 
 function StatusPill({ visible, type, icon, label, mobile }) {
@@ -62,8 +64,54 @@ function StatusPill({ visible, type, icon, label, mobile }) {
   );
 }
 
-export default function Navbar({ active, onNavigate, onSettingsOpen, storeDomain, pendingCount, online }) {
-  const [menuOpen, setMenuOpen]           = useState(false);
+function LicenseWarningPill({ licenseWarning, mobile }) {
+  const [rendered, setRendered] = useState(false);
+  const [show, setShow]         = useState(false);
+
+  const active = !!licenseWarning;
+
+  useEffect(() => {
+    if (active) {
+      setRendered(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => setShow(true)));
+    } else {
+      setShow(false);
+      const t = setTimeout(() => setRendered(false), 300);
+      return () => clearTimeout(t);
+    }
+  }, [active]);
+
+  if (!rendered) return null;
+
+  const remaining = licenseWarning?.remaining ?? 0;
+
+  const base = mobile
+    ? 'flex items-center gap-1 text-[11px] font-medium'
+    : 'hidden sm:flex h-full items-center gap-1.5 text-[11px] font-medium px-3 rounded-full';
+
+  return (
+    <span
+      className={`${base} ${statusStyles.license} transition-all duration-300 ease-in-out ${
+        show ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1'
+      }`}
+    >
+      <RiErrorWarningLine size={12} />
+      License revoked. Closing in {remaining}s
+    </span>
+  );
+}
+
+export default function Navbar({
+  active,
+  onNavigate,
+  onSettingsOpen,
+  onProfileOpen,
+  storeDomain,
+  pendingCount,
+  online,
+  licenseWarning,
+}) {
+  const [menuOpen, setMenuOpen]             = useState(false);
   const [showBackOnline, setShowBackOnline] = useState(false);
   const prevOnline = useRef(online);
 
@@ -137,8 +185,9 @@ export default function Navbar({ active, onNavigate, onSettingsOpen, storeDomain
             </span>
           )}
 
-          <StatusPill visible={showOffline}    type="offline" icon={<RiWifiOffLine size={12} />} label="Offline"      />
-          <StatusPill visible={showBackOnline} type="online"  icon={<RiWifiLine    size={12} />} label="Back Online"  />
+          <StatusPill visible={showOffline}    type="offline" icon={<RiWifiOffLine size={12} />} label="Offline"     />
+          <StatusPill visible={showBackOnline} type="online"  icon={<RiWifiLine    size={12} />} label="Back Online" />
+          <LicenseWarningPill licenseWarning={licenseWarning} />
 
           <button
             onClick={onSettingsOpen}
@@ -152,7 +201,12 @@ export default function Navbar({ active, onNavigate, onSettingsOpen, storeDomain
             <RiNotification3Line size={15} />
           </button>
 
-          <button className="w-8 h-8 rounded-full bg-white dark:bg-white/10 hidden sm:flex items-center justify-center text-[#666] dark:text-white/50 hover:text-white dark:hover:text-[#1a1a1a] hover:bg-[#1a1a1a] dark:hover:bg-white transition-all duration-150">
+          {/* Profile button */}
+          <button
+            onClick={onProfileOpen}
+            className="w-8 h-8 rounded-full bg-white dark:bg-white/10 hidden sm:flex items-center justify-center text-[#666] dark:text-white/50 hover:text-white dark:hover:text-[#1a1a1a] hover:bg-[#1a1a1a] dark:hover:bg-white transition-all duration-150"
+            title="Profile"
+          >
             <RiUserLine size={15} />
           </button>
 
@@ -204,6 +258,7 @@ export default function Navbar({ active, onNavigate, onSettingsOpen, storeDomain
             <div className="flex items-center gap-2 ml-auto">
               <StatusPill visible={showOffline}    type="offline" icon={<RiWifiOffLine size={12} />} label="Offline"     mobile />
               <StatusPill visible={showBackOnline} type="online"  icon={<RiWifiLine    size={12} />} label="Back Online" mobile />
+              <LicenseWarningPill licenseWarning={licenseWarning} mobile />
               <button
                 onClick={onSettingsOpen}
                 className="flex items-center gap-1 text-[13px] text-[#555] dark:text-white/60 hover:text-black dark:hover:text-white"
@@ -211,7 +266,12 @@ export default function Navbar({ active, onNavigate, onSettingsOpen, storeDomain
                 <RiSettings3Line size={14} /> Settings
               </button>
               <RiNotification3Line size={15} className="text-[#666] dark:text-white/40" />
-              <RiUserLine          size={15} className="text-[#666] dark:text-white/40" />
+              <button
+                onClick={onProfileOpen}
+                className="flex items-center gap-1 text-[13px] text-[#555] dark:text-white/60 hover:text-black dark:hover:text-white"
+              >
+                <RiUserLine size={15} />
+              </button>
             </div>
           </div>
         </div>

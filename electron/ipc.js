@@ -4,6 +4,7 @@ const path = require('path');
 const { app } = require('electron');
 const db = require('./db');
 const { wooRequest, ftpTestConnection, ftpUploadImage } = require('./woo');
+const { activateLicense, checkCachedLicense, validateLicense, getCachedLicense, clearLicenseCache, getMachineId } = require('./license');
 
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 
@@ -41,6 +42,10 @@ function registerIpcHandlers() {
   // Orders (SQLite)
   ipcMain.handle('db:loadOrders',  () => db.loadOrders());
   ipcMain.handle('db:saveOrders',  (_e, orders) => db.saveOrders(orders));
+
+  // Profile (SQLite)
+  ipcMain.handle('db:loadProfile', () => db.loadProfile());
+  ipcMain.handle('db:saveProfile', (_e, data) => db.saveProfile(data));
 
   // WooCommerce
   ipcMain.handle('woo:testConnection', async (_e, settings) => {
@@ -108,6 +113,35 @@ function registerIpcHandlers() {
         fileName,
       });
     } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // License
+  ipcMain.handle('license:activate', async (_e, key) => {
+    try { return await activateLicense(key); }
+    catch (e) { return { ok: false, reason: e.message }; }
+  });
+
+  ipcMain.handle('license:checkCached', () => {
+    return checkCachedLicense();
+  });
+
+  ipcMain.handle('license:validate', async (_e, key) => {
+    try { return await validateLicense(key); }
+    catch (e) { return { ok: false, reason: e.message }; }
+  });
+
+  ipcMain.handle('license:getCached', () => {
+    return getCachedLicense();
+  });
+
+  ipcMain.handle('license:clear', () => {
+    clearLicenseCache();
+    return { ok: true };
+  });
+
+  // Machine ID
+  ipcMain.handle('license:getMachineId', () => {
+    return getMachineId();
   });
 }
 

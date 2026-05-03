@@ -2,8 +2,11 @@ const https = require('https');
 const http  = require('http');
 const net   = require('net');
 
+const httpsAgent = new https.Agent({ keepAlive: false });
+const httpAgent  = new http.Agent({ keepAlive: false });
+
 // ── WooCommerce ───────────────────────────────────────────────────────────────
-function wooRequest(settings, endpoint, method = 'GET', body = null) {
+function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs = 30000, _redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const base    = (settings.storeUrl || '').replace(/\/$/, '');
     const token   = Buffer.from(`${settings.consumerKey}:${settings.consumerSecret}`).toString('base64');
@@ -11,31 +14,65 @@ function wooRequest(settings, endpoint, method = 'GET', body = null) {
     const isHttps = parsed.protocol === 'https:';
     const lib     = isHttps ? https : http;
 
+    const bodyStr = body ? JSON.stringify(body) : null;
+
     const req = lib.request({
       hostname: parsed.hostname,
       port:     parsed.port || (isHttps ? 443 : 80),
       path:     parsed.pathname + parsed.search,
       method,
+      agent:    isHttps ? httpsAgent : httpAgent,
       headers: {
-        'Authorization': `Basic ${token}`,
-        'Content-Type':  'application/json',
-        'Accept':        'application/json',
+        'Authorization':  `Basic ${token}`,
+        'Content-Type':   'application/json',
+        'Accept':         'application/json',
+        'Connection':     'close',
+        ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
       },
     }, (res) => {
+      // Follow redirects (301/302/307/308) up to 5 times
+      if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location && _redirectCount < 5) {
+        res.resume(); // drain and discard response body
+        try {
+          const redirectUrl = new URL(res.headers.location);
+          const newBase     = `${redirectUrl.protocol}//${redirectUrl.host}`;
+          const newEndpoint = redirectUrl.pathname.replace('/wp-json/wc/v3', '') + redirectUrl.search;
+          const newSettings = { ...settings, storeUrl: newBase };
+          wooRequest(newSettings, newEndpoint, method, body, timeoutMs, _redirectCount + 1)
+            .then(resolve).catch(reject);
+        } catch (e) {
+          resolve({ ok: false, error: `Redirect error: ${e.message}`, status: res.statusCode });
+        }
+        return;
+      }
+
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
         try {
-          const parsed = JSON.parse(data);
+          const json = JSON.parse(data);
           if (res.statusCode >= 200 && res.statusCode < 300)
-            resolve({ ok: true, data: parsed, status: res.statusCode });
+            resolve({ ok: true, data: json, status: res.statusCode });
           else
-            resolve({ ok: false, error: parsed?.message || `HTTP ${res.statusCode}`, status: res.statusCode });
-        } catch { resolve({ ok: false, error: 'Invalid JSON response', status: res.statusCode }); }
+            resolve({ ok: false, error: json?.message || `HTTP ${res.statusCode}`, status: res.statusCode });
+        } catch {
+          // Not JSON — likely HTML error page or redirect loop
+          const preview = data.slice(0, 300).replace(/\s+/g, ' ').trim();
+          resolve({
+            ok: false,
+            error: `Non-JSON response (HTTP ${res.statusCode}). Check your Store URL uses HTTPS. Preview: ${preview}`,
+            status: res.statusCode,
+          });
+        }
       });
     });
+
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Request timed out after ${timeoutMs / 1000}s`));
+    });
+
     req.on('error', e => reject(new Error(e.message)));
-    if (body) req.write(JSON.stringify(body));
+    if (bodyStr) req.write(bodyStr);
     req.end();
   });
 }

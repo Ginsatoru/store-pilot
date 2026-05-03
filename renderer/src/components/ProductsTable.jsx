@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   RiArrowUpLine, RiArrowDownLine, RiRefreshLine,
-  RiSearchLine, RiAddLine, RiFilter3Line, RiDownloadLine,
+  RiSearchLine, RiAddLine, RiFilter3Line, RiDownloadLine, RiUploadLine,
 } from 'react-icons/ri';
 
 const GRID_STYLE = {
@@ -9,9 +9,9 @@ const GRID_STYLE = {
   gridTemplateColumns: '40px 2fr 1fr 1fr 1fr 1.2fr 1fr 1fr',
 };
 
-const CELL             = 'px-3 py-2.5 flex items-center';
-const CELL_INDENT      = 'py-2.5 flex items-center';
-const INDENT_STYLE     = { paddingLeft: 'calc(0.75rem + 14px)', paddingRight: '0.75rem' };
+const CELL               = 'px-3 py-2.5 flex items-center';
+const CELL_INDENT        = 'py-2.5 flex items-center';
+const INDENT_STYLE       = { paddingLeft: 'calc(0.75rem + 14px)', paddingRight: '0.75rem' };
 const STATUS_INDENT_STYLE = { paddingLeft: 'calc(0.75rem + 18px)', paddingRight: '0.75rem' };
 
 const FILTERS = ['Columns', 'Department', 'Site', 'Lifecycle', 'Status', 'Entity'];
@@ -26,7 +26,29 @@ const COL_HEADERS = [
   { key: 'status',    label: 'Status', statusCol: true },
 ];
 
-export default function ProductsTable({ products, allProducts, search, onSearch, onRefresh, onAddNew, onRowClick, loading }) {
+function exportToCSV(products) {
+  const headers = ['ID', 'Name', 'Category', 'Price', 'Stock', 'Status', 'Date'];
+  const rows = products.map(p => [
+    p.id,
+    `"${(p.name || '').replace(/"/g, '""')}"`,
+    `"${(p.category || '').replace(/"/g, '""')}"`,
+    p.price?.toFixed(2) ?? '0.00',
+    p.stock ?? 0,
+    p.status || '',
+    p.date ? new Date(p.date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+  ]);
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `products_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export default function ProductsTable({ products, allProducts, search, onSearch, onRefresh, onAddNew, onRowClick, onImport, loading }) {
   const [selected, setSelected]   = useState(new Set());
   const [sortField, setSortField] = useState(null);
   const [sortDir, setSortDir]     = useState('asc');
@@ -55,6 +77,13 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
     if (va > vb) return sortDir === 'asc' ? 1 : -1;
     return 0;
   });
+
+  const handleExport = () => {
+    const toExport = selected.size > 0
+      ? sorted.filter(p => selected.has(p.id))
+      : sorted;
+    exportToCSV(toExport);
+  };
 
   const total = allProducts?.length ?? products.length;
 
@@ -97,9 +126,21 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
           <button className="w-7 h-7 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150">
             <RiFilter3Line size={13} />
           </button>
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150 text-[12px] font-medium">
+          <button
+            onClick={onImport}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150 text-[12px] font-medium"
+          >
+            <RiUploadLine size={12} />
+            Import
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={loading || sorted.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+            title={selected.size > 0 ? `Export ${selected.size} selected` : `Export all ${sorted.length} products`}
+          >
             <RiDownloadLine size={12} />
-            Export
+            Export{selected.size > 0 ? ` (${selected.size})` : ''}
           </button>
         </div>
       </div>
@@ -227,6 +268,9 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
             : products.length === total
               ? `${total} of ${total} products`
               : `${products.length} of ${total} products`}
+          {selected.size > 0 && (
+            <span className="ml-2 text-yellow-600 dark:text-yellow-400 font-medium">{selected.size} selected</span>
+          )}
         </span>
         {onRefresh && (
           <button

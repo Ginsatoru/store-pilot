@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Navbar from './components/Navbar.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
+import ProfileModal from './components/ProfileModal.jsx';
 import Products from './pages/Products.jsx';
 import Sync from './pages/Sync.jsx';
 import Orders from './pages/Orders.jsx';
 import Placeholder from './pages/Placeholder.jsx';
 import { loadSettings, fetchProducts, fetchOrders, dbLoadOrders, dbSaveOrders, ftpUploadImage, createProduct, updateProduct, deleteProduct } from './services/woo.js';
+import LicenseGate from './components/LicenseGate.jsx';
 
 export function normalizeProduct(p, existingColor) {
   const colors = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
@@ -36,11 +38,9 @@ const INTERVAL_MS = {
   '6 hours':    6  * 60 * 60 * 1000,
 };
 
-// ── Theme helper ──────────────────────────────────────────────────────────────
 function resolveTheme(theme) {
   if (theme === 'Dark')  return 'dark';
   if (theme === 'Light') return 'light';
-  // System: use OS preference
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
@@ -52,10 +52,16 @@ function applyTheme(theme) {
 export default function App() {
   const [page, setPage]                   = useState('Products');
   const [settingsOpen, setSettingsOpen]   = useState(false);
+  const [profileOpen, setProfileOpen]     = useState(false);
   const [settings, setSettings]           = useState(null);
   const [syncSettings, setSyncSettings]   = useState({ autoSync: false, interval: '15 minutes' });
   const [theme, setTheme]                 = useState('Light');
   const [online, setOnline]               = useState(navigator.onLine);
+  const [license, setLicense]             = useState(null);
+  const [licenseInvalidReason, setLicenseInvalidReason] = useState(null);
+
+  // License warning countdown (from main process)
+  const [licenseWarning, setLicenseWarning] = useState(null); // { reason, remaining }
 
   // Products
   const [productList, setProductList]         = useState([]);
@@ -63,7 +69,7 @@ export default function App() {
   const [productError, setProductError]       = useState(null);
   const [fetched, setFetched]                 = useState(false);
 
-  // Orders — loaded from disk on startup, refreshed via sync
+  // Orders
   const [orderList, setOrderList]             = useState([]);
 
   // Sync
@@ -79,11 +85,9 @@ export default function App() {
   useEffect(() => { pendingQueueRef.current = pendingQueue; }, [pendingQueue]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
-  // ── Apply theme whenever it changes ──────────────────────────────────────────
+  // ── Apply theme ───────────────────────────────────────────────────────────────
   useEffect(() => {
     applyTheme(theme);
-
-    // If System, also listen for OS preference changes
     if (theme === 'System') {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       const handler = () => applyTheme('System');
@@ -92,7 +96,7 @@ export default function App() {
     }
   }, [theme]);
 
-  // ── Online/offline tracking ───────────────────────────────────────────────────
+  // ── Online/offline ────────────────────────────────────────────────────────────
   useEffect(() => {
     const up   = () => setOnline(true);
     const down = () => setOnline(false);
@@ -101,13 +105,59 @@ export default function App() {
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
   }, []);
 
+  // ── License warning listener (countdown ticks from main) ─────────────────────
+  useEffect(() => {
+    if (!window.electronAPI?.onLicenseWarning) return;
+    const unsub = window.electronAPI.onLicenseWarning((payload) => {
+      console.log('[App] license:warning', payload);
+      setLicenseWarning(payload); // { reason, remaining }
+    });
+    return () => unsub?.();
+  }, []);
+
+  // ── License invalid listener ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!window.electronAPI?.onLicenseInvalid) return;
+    const unsub = window.electronAPI.onLicenseInvalid(async (reason) => {
+      console.log('[App] license:invalid', reason);
+      setLicenseWarning(null);
+      await window.electronAPI.licenseClear();
+      setLicenseInvalidReason(reason || 'Your license has been deactivated.');
+      setLicense(null);
+    });
+    return () => unsub?.();
+  }, []);
+
   const log = useCallback((type, msg) =>
     setSyncLog(prev => [...prev, { type, msg, time: new Date().toLocaleTimeString() }])
   , []);
 
-  // ── Initial load ─────────────────────────────────────────────────────────────
+  // ── Initial load after license confirmed ──────────────────────────────────────
   useEffect(() => {
-    // Load persisted orders immediately
+    if (!license) return;
+
+    setLicenseInvalidReason(null);
+    setLicenseWarning(null);
+
+    // Save license data to profile SQLite cache (only if not already stored)
+    if (window.electronAPI?.dbLoadProfile && window.electronAPI?.dbSaveProfile) {
+      window.electronAPI.dbLoadProfile().then(res => {
+        if (!res?.ok || !res.data) {
+          // No profile cached yet — save license data now
+          const profileData = {
+            key:          license.key,
+            plan:         license.plan,
+            label:        license.label,
+            features:     license.features,
+            expiresAt:    license.expiresAt,
+            user:         license.user,
+            lastValidated: Date.now(),
+          };
+          window.electronAPI.dbSaveProfile(profileData).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
     dbLoadOrders().then(res => {
       if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
         setOrderList(res.data);
@@ -122,14 +172,12 @@ export default function App() {
         setProductError('No store connection configured. Open Settings to connect your store.');
         setProductLoading(false);
       }
-      if (s?.sync)       setSyncSettings(s.sync);
-      if (s?.appearance?.theme) {
-        setTheme(s.appearance.theme);
-      }
+      if (s?.sync)              setSyncSettings(s.sync);
+      if (s?.appearance?.theme) setTheme(s.appearance.theme);
     }).catch(() => { setProductError('Failed to load settings.'); setProductLoading(false); });
-  }, []);
+  }, [license]);
 
-  // ── Fetch products (load / manual refresh only) ───────────────────────────────
+  // ── Fetch products ────────────────────────────────────────────────────────────
   const doFetchProducts = useCallback(async (conn) => {
     setProductLoading(true);
     setProductError(null);
@@ -145,7 +193,7 @@ export default function App() {
 
   const handleRefreshProducts = useCallback(() => { if (settings) doFetchProducts(settings); }, [settings, doFetchProducts]);
 
-  // ── Core sync — Phase 1: push products, Phase 2: pull orders ─────────────────
+  // ── Core sync ─────────────────────────────────────────────────────────────────
   const runSync = useCallback(async () => {
     if (syncingRef.current) return;
 
@@ -163,7 +211,6 @@ export default function App() {
       path: s.conn.ftpPath || 'public_html/wp-content/uploads/',
     } : null;
 
-    // ── Phase 1: Push pending product changes ─────────────────────────────────
     const entries = Object.entries(pendingQueueRef.current);
     if (entries.length > 0) {
       log('info', `Pushing ${entries.length} product change(s) to WooCommerce…`);
@@ -241,7 +288,6 @@ export default function App() {
       log('info', 'No pending product changes to push.');
     }
 
-    // ── Phase 2: Pull orders from WooCommerce and persist ─────────────────────
     log('info', 'Fetching latest orders from WooCommerce…');
     try {
       const res = await fetchOrders(conn, { perPage: 100, page: 1 });
@@ -298,7 +344,7 @@ export default function App() {
   const handleSettingsClose = useCallback(() => {
     setSettingsOpen(false);
     loadSettings().then(s => {
-      if (s?.sync)             setSyncSettings(s.sync);
+      if (s?.sync)              setSyncSettings(s.sync);
       if (s?.appearance?.theme) setTheme(s.appearance.theme);
       if (s?.conn?.storeUrl && s?.conn?.consumerKey) {
         setSettings(prev => {
@@ -317,6 +363,12 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  // ── License gate ──────────────────────────────────────────────────────────────
+  if (!license) {
+    return <LicenseGate onActivated={setLicense} invalidReason={licenseInvalidReason} />;
+  }
+
+  // ── Main app ──────────────────────────────────────────────────────────────────
   const renderPage = () => {
     switch (page) {
       case 'Products':
@@ -333,12 +385,7 @@ export default function App() {
           />
         );
       case 'Orders':
-        return (
-          <Orders
-            orderList={orderList}
-            syncing={syncing}
-          />
-        );
+        return <Orders orderList={orderList} syncing={syncing} />;
       case 'Sync':
         return (
           <Sync
@@ -365,13 +412,16 @@ export default function App() {
         active={page}
         onNavigate={setPage}
         onSettingsOpen={() => setSettingsOpen(true)}
+        onProfileOpen={() => setProfileOpen(true)}
         pendingCount={Object.keys(pendingQueue).length}
         online={online}
+        licenseWarning={licenseWarning}
       />
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {renderPage()}
       </div>
       {settingsOpen && <SettingsModal onClose={handleSettingsClose} />}
+      {profileOpen  && <ProfileModal onClose={() => setProfileOpen(false)} license={license} />}
     </div>
   );
 }
