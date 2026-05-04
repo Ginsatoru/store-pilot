@@ -34,12 +34,12 @@ export const dbLoadOrders  = ()       => api().dbLoadOrders();
 export const dbSaveOrders  = (orders) => api().dbSaveOrders(orders);
 
 // ── WooCommerce (online required) ─────────────────────────────────────────────
-export const testConnection    = (settings)             => guard(() => api().wooTestConnection(settings));
-export const fetchProducts     = (settings, params)     => guard(() => api().wooFetchProducts(settings, params));
-export const createProduct     = (settings, data)       => guard(() => api().wooCreateProduct(settings, data));
-export const updateProduct     = (settings, id, data)   => guard(() => api().wooUpdateProduct(settings, id, data));
-export const deleteProduct     = (settings, id)         => guard(() => api().wooDeleteProduct(settings, id));
-export const fetchOrders       = (settings, params)     => guard(() => api().wooFetchOrders(settings, params));
+export const testConnection    = (settings)           => guard(() => api().wooTestConnection(settings));
+export const fetchProducts     = (settings, params)   => guard(() => api().wooFetchProducts(settings, params));
+export const createProduct     = (settings, data)     => guard(() => api().wooCreateProduct(settings, data));
+export const updateProduct     = (settings, id, data) => guard(() => api().wooUpdateProduct(settings, id, data));
+export const deleteProduct     = (settings, id)       => guard(() => api().wooDeleteProduct(settings, id));
+export const fetchOrders       = (settings, params)   => guard(() => api().wooFetchOrders(settings, params));
 
 // ── FTP (online required) ─────────────────────────────────────────────────────
 export const testFtpConnection = (settings) => guard(() => api().ftpTestConnection(settings));

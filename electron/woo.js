@@ -5,8 +5,15 @@ const net   = require('net');
 const httpsAgent = new https.Agent({ keepAlive: false });
 const httpAgent  = new http.Agent({ keepAlive: false });
 
+const TIMEOUT_READ  = 60000; // GET — 60s
+const TIMEOUT_WRITE = 90000; // POST/PUT/DELETE — 90s
+
 // ── WooCommerce ───────────────────────────────────────────────────────────────
-function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs = 30000, _redirectCount = 0) {
+function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs, _redirectCount = 0) {
+  if (timeoutMs === undefined) {
+    timeoutMs = (method === 'GET') ? TIMEOUT_READ : TIMEOUT_WRITE;
+  }
+
   return new Promise((resolve, reject) => {
     const base    = (settings.storeUrl || '').replace(/\/$/, '');
     const token   = Buffer.from(`${settings.consumerKey}:${settings.consumerSecret}`).toString('base64');
@@ -32,7 +39,7 @@ function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs =
     }, (res) => {
       // Follow redirects (301/302/307/308) up to 5 times
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location && _redirectCount < 5) {
-        res.resume(); // drain and discard response body
+        res.resume();
         try {
           const redirectUrl = new URL(res.headers.location);
           const newBase     = `${redirectUrl.protocol}//${redirectUrl.host}`;
@@ -56,7 +63,6 @@ function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs =
           else
             resolve({ ok: false, error: json?.message || `HTTP ${res.statusCode}`, status: res.statusCode });
         } catch {
-          // Not JSON — likely HTML error page or redirect loop
           const preview = data.slice(0, 300).replace(/\s+/g, ' ').trim();
           resolve({
             ok: false,
@@ -75,6 +81,24 @@ function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs =
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
+}
+
+// ── WooCommerce with retry on timeout ─────────────────────────────────────────
+async function wooRequestWithRetry(settings, endpoint, method = 'GET', body = null, retries = 1) {
+  const timeoutMs = (method === 'GET') ? TIMEOUT_READ : TIMEOUT_WRITE;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await wooRequest(settings, endpoint, method, body, timeoutMs);
+      return res;
+    } catch (e) {
+      const isTimeout = e.message?.includes('timed out');
+      if (isTimeout && attempt < retries) {
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 // ── FTP ───────────────────────────────────────────────────────────────────────
@@ -195,4 +219,4 @@ function ftpUploadImage({ host, port, user, pass, remotePath, fileData, fileName
   });
 }
 
-module.exports = { wooRequest, ftpTestConnection, ftpUploadImage };
+module.exports = { wooRequest, wooRequestWithRetry, ftpTestConnection, ftpUploadImage };

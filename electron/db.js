@@ -17,7 +17,7 @@ function getDb() {
 function initSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS products (
-      id          TEXT PRIMARY KEY,
+      sku         TEXT PRIMARY KEY,
       data        TEXT NOT NULL,
       updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
@@ -56,12 +56,12 @@ function loadProducts() {
 function saveProducts(products) {
   try {
     const insert = getDb().prepare(`
-      INSERT INTO products (id, data, updated_at)
+      INSERT INTO products (sku, data, updated_at)
       VALUES (?, ?, strftime('%s','now'))
-      ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+      ON CONFLICT(sku) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
     `);
     const tx = getDb().transaction((items) => {
-      for (const p of items) insert.run(String(p.id), JSON.stringify(p));
+      for (const p of items) insert.run(String(p.sku), JSON.stringify(p));
     });
     tx(products);
     return { ok: true };

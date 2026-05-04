@@ -6,27 +6,79 @@ import Products from './pages/Products.jsx';
 import Sync from './pages/Sync.jsx';
 import Orders from './pages/Orders.jsx';
 import Placeholder from './pages/Placeholder.jsx';
-import { loadSettings, fetchProducts, fetchOrders, dbLoadOrders, dbSaveOrders, ftpUploadImage, createProduct, updateProduct, deleteProduct } from './services/woo.js';
+import { loadSettings, fetchProducts, fetchOrders, dbLoadOrders, dbSaveOrders, dbLoadProducts, dbSaveProducts, dbLoadQueue, dbUpsertQueueItem, dbDeleteQueueItem, dbClearQueue, ftpUploadImage, createProduct, updateProduct, deleteProduct } from './services/woo.js';
 import LicenseGate from './components/LicenseGate.jsx';
 
+const COLORS = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
+
 export function normalizeProduct(p, existingColor) {
-  const colors = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
+  const sku = p.sku && p.sku.trim() !== '' ? p.sku.trim() : String(p.id);
   return {
-    id:           p.id,
-    name:         p.name || 'Untitled',
-    category:     p.categories?.[0]?.name || 'Uncategorized',
-    price:        parseFloat(p.price || p.regular_price || 0),
-    stock:        p.stock_quantity ?? 0,
-    date:         p.date_created || new Date().toISOString(),
-    status:       p.status === 'publish' ? 'Live' : 'Draft',
-    color:        existingColor || colors[p.id % colors.length],
-    localPreview: null,
-    _raw:         p,
+    id:                p.id,
+    sku,
+    name:              p.name || 'Untitled',
+    slug:              p.slug || '',
+    type:              p.type || 'simple',
+    permalink:         p.permalink || '',
+    status:            p.status === 'publish' ? 'Live' : 'Draft',
+    _status:           p.status,
+    price:             parseFloat(p.price || 0),
+    regular_price:     parseFloat(p.regular_price || 0),
+    sale_price:        parseFloat(p.sale_price || 0),
+    on_sale:           p.on_sale || false,
+    stock:             p.stock_quantity ?? 0,
+    stock_status:      p.stock_status || 'instock',
+    manage_stock:      p.manage_stock || false,
+    category:          p.categories?.[0]?.name || 'Uncategorized',
+    categories:        p.categories || [],
+    tags:              p.tags || [],
+    images:            p.images || [],
+    description:       p.description || '',
+    short_description: p.short_description || '',
+    weight:            p.weight || '',
+    dimensions:        p.dimensions || { length: '', width: '', height: '' },
+    date:              p.date_created || new Date().toISOString(),
+    date_modified:     p.date_modified || '',
+    color:             existingColor || COLORS[p.id % COLORS.length],
+    localPreview:      p.images?.[0]?.src || null,
+    _pending:          false,
+    _raw:              p,
   };
 }
 
 function tempId() {
   return `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// Returns true only for real WooCommerce integer IDs
+function isValidWooId(id) {
+  if (id === null || id === undefined) return false;
+  if (typeof id === 'string' && (id.startsWith('local_') || id.startsWith('import_'))) return false;
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0;
+}
+
+function buildWooPayload(product, imageUrl) {
+  return {
+    name:              product.name,
+    sku:               product.sku || '',
+    type:              product.type || 'simple',
+    status:            product.status === 'Live' ? 'publish' : 'draft',
+    regular_price:     String(product.regular_price || product.price || 0),
+    sale_price:        product.sale_price > 0 ? String(product.sale_price) : '',
+    stock_quantity:    product.stock ?? 0,
+    manage_stock:      product.manage_stock ?? true,
+    stock_status:      product.stock_status || 'instock',
+    categories:        product.categories?.length
+                         ? product.categories
+                         : product.category ? [{ name: product.category }] : [],
+    tags:              product.tags || [],
+    weight:            product.weight || '',
+    dimensions:        product.dimensions || { length: '', width: '', height: '' },
+    short_description: product.short_description || '',
+    description:       product.description || '',
+    ...(imageUrl ? { images: [{ src: imageUrl }] } : {}),
+  };
 }
 
 const INTERVAL_MS = {
@@ -59,31 +111,31 @@ export default function App() {
   const [online, setOnline]               = useState(navigator.onLine);
   const [license, setLicense]             = useState(null);
   const [licenseInvalidReason, setLicenseInvalidReason] = useState(null);
-
-  // License warning countdown (from main process)
-  const [licenseWarning, setLicenseWarning] = useState(null); // { reason, remaining }
+  const [licenseWarning, setLicenseWarning] = useState(null);
 
   // Products
-  const [productList, setProductList]         = useState([]);
-  const [productLoading, setProductLoading]   = useState(true);
-  const [productError, setProductError]       = useState(null);
-  const [fetched, setFetched]                 = useState(false);
+  const [productList, setProductList]       = useState([]);
+  const [productLoading, setProductLoading] = useState(true);
+  const [productError, setProductError]     = useState(null);
+  const [fetched, setFetched]               = useState(false);
 
   // Orders
-  const [orderList, setOrderList]             = useState([]);
+  const [orderList, setOrderList] = useState([]);
 
   // Sync
-  const [pendingQueue, setPendingQueue]       = useState({});
-  const [syncing, setSyncing]                 = useState(false);
-  const [syncLog, setSyncLog]                 = useState([]);
+  const [pendingQueue, setPendingQueue] = useState({});
+  const [syncing, setSyncing]           = useState(false);
+  const [syncLog, setSyncLog]           = useState([]);
 
   const syncingRef      = useRef(false);
   const pendingQueueRef = useRef({});
+  const productListRef  = useRef([]);   // always-current snapshot for async callbacks
   const settingsRef     = useRef(null);
   const autoSyncTimer   = useRef(null);
 
   useEffect(() => { pendingQueueRef.current = pendingQueue; }, [pendingQueue]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { productListRef.current = productList; }, [productList]);
 
   // ── Apply theme ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -105,12 +157,12 @@ export default function App() {
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
   }, []);
 
-  // ── License warning listener (countdown ticks from main) ─────────────────────
+  // ── License warning listener ──────────────────────────────────────────────────
   useEffect(() => {
     if (!window.electronAPI?.onLicenseWarning) return;
     const unsub = window.electronAPI.onLicenseWarning((payload) => {
       console.log('[App] license:warning', payload);
-      setLicenseWarning(payload); // { reason, remaining }
+      setLicenseWarning(payload);
     });
     return () => unsub?.();
   }, []);
@@ -139,30 +191,54 @@ export default function App() {
     setLicenseInvalidReason(null);
     setLicenseWarning(null);
 
-    // Save license data to profile SQLite cache (only if not already stored)
     if (window.electronAPI?.dbLoadProfile && window.electronAPI?.dbSaveProfile) {
       window.electronAPI.dbLoadProfile().then(res => {
         if (!res?.ok || !res.data) {
-          // No profile cached yet — save license data now
-          const profileData = {
-            key:          license.key,
-            plan:         license.plan,
-            label:        license.label,
-            features:     license.features,
-            expiresAt:    license.expiresAt,
-            user:         license.user,
+          window.electronAPI.dbSaveProfile({
+            key:           license.key,
+            plan:          license.plan,
+            label:         license.label,
+            features:      license.features,
+            expiresAt:     license.expiresAt,
+            user:          license.user,
             lastValidated: Date.now(),
-          };
-          window.electronAPI.dbSaveProfile(profileData).catch(() => {});
+          }).catch(() => {});
         }
       }).catch(() => {});
     }
 
-    dbLoadOrders().then(res => {
-      if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
-        setOrderList(res.data);
+    // Restore cached products + queue from SQLite
+    Promise.all([dbLoadProducts(), dbLoadQueue(), dbLoadOrders()]).then(([pRes, qRes, oRes]) => {
+      if (pRes.ok && pRes.data?.length > 0) {
+        setProductList(pRes.data);
+        productListRef.current = pRes.data;
+        setFetched(true);
+        setProductLoading(false);
       }
-    }).catch(() => {});
+      if (qRes.ok && qRes.data) {
+        setPendingQueue(qRes.data);
+        pendingQueueRef.current = qRes.data;
+        if (pRes.ok && pRes.data?.length > 0) {
+          const queuedSkus = new Set(
+            Object.values(qRes.data).map(item => item.product?.sku || item.product?.id)
+          );
+          if (queuedSkus.size > 0) {
+            setProductList(prev => {
+              const next = prev.map(p =>
+                queuedSkus.has(p.sku) || queuedSkus.has(String(p.id))
+                  ? { ...p, _pending: true }
+                  : p
+              );
+              productListRef.current = next;
+              return next;
+            });
+          }
+        }
+      }
+      if (oRes.ok && Array.isArray(oRes.data) && oRes.data.length > 0) {
+        setOrderList(oRes.data);
+      }
+    }).catch(e => console.error('DB load error:', e));
 
     loadSettings().then(s => {
       if (s?.conn?.storeUrl && s?.conn?.consumerKey) {
@@ -183,15 +259,37 @@ export default function App() {
     setProductError(null);
     try {
       const res = await fetchProducts(conn, { perPage: 100, page: 1 });
-      if (res.ok) { setProductList((res.data || []).map(p => normalizeProduct(p))); setFetched(true); }
-      else setProductError(res.error || 'Failed to fetch products');
+      if (res.ok) {
+        const normalized = (res.data || []).map(p => normalizeProduct(p));
+        const seen = new Map();
+        for (const p of normalized) {
+          if (!seen.has(p.sku)) seen.set(p.sku, p);
+        }
+        const deduped = Array.from(seen.values());
+        const queuedSkus = new Set(
+          Object.values(pendingQueueRef.current).map(item => item.product?.sku || item.product?.id)
+        );
+        const merged = deduped.map(p =>
+          queuedSkus.has(p.sku) || queuedSkus.has(String(p.id))
+            ? { ...p, _pending: true }
+            : p
+        );
+        setProductList(merged);
+        productListRef.current = merged;
+        setFetched(true);
+        dbSaveProducts(merged).catch(() => {});
+      } else {
+        setProductError(res.error || 'Failed to fetch products');
+      }
     } catch (e) { setProductError(e.message || 'Unknown error'); }
     setProductLoading(false);
   }, []);
 
   useEffect(() => { if (settings && !fetched) doFetchProducts(settings); }, [settings, fetched]);
 
-  const handleRefreshProducts = useCallback(() => { if (settings) doFetchProducts(settings); }, [settings, doFetchProducts]);
+  const handleRefreshProducts = useCallback(() => {
+    if (settings) doFetchProducts(settings);
+  }, [settings, doFetchProducts]);
 
   // ── Core sync ─────────────────────────────────────────────────────────────────
   const runSync = useCallback(async () => {
@@ -217,16 +315,40 @@ export default function App() {
       let successCount = 0, failCount = 0;
 
       for (const [key, item] of entries) {
-        const { action, product, imageFile, imagePreview } = item;
+        let { action, product, imageFile, imagePreview } = item;
         const name = product?.name || `Product #${product?.id}`;
+
+        // ── Resolve real WooCommerce ID by SKU from live productList ──────────
+        let resolvedId = product.id;
+        if (product.sku) {
+          const live = productListRef.current.find(p => p.sku === product.sku);
+          if (live && isValidWooId(live.id)) {
+            resolvedId = live.id;
+          }
+        }
+
+        // Fall back to create if still no valid ID for update
+        if (action === 'update' && !isValidWooId(resolvedId)) {
+          log('info', `"${name}" has no valid WooCommerce ID — treating as create.`);
+          action = 'create';
+        }
+
+        // For delete, skip entirely if no valid ID — product never made it to Woo
+        if (action === 'delete' && !isValidWooId(resolvedId)) {
+          log('info', `"${name}" has no WooCommerce ID — removing from queue.`);
+          setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
+          dbDeleteQueueItem(key).catch(() => {});
+          successCount++;
+          continue;
+        }
 
         try {
           let imageUrl = null;
-          if (imagePreview && ftpSettings) {
+          if (imagePreview && imagePreview.startsWith('data:') && ftpSettings) {
             log('info', `Uploading image for "${name}"…`);
             const base64   = imagePreview.includes(',') ? imagePreview.split(',')[1] : imagePreview;
             const ext      = imageFile?.name?.split('.').pop() || 'jpg';
-            const fileName = `product-${product.id}-${Date.now()}.${ext}`;
+            const fileName = `product-${product.sku || product.id}-${Date.now()}.${ext}`;
             const upRes    = await ftpUploadImage({ ftpSettings, fileData: base64, fileName });
             if (upRes.ok) {
               const storeBase    = (s?.conn?.storeUrl || '').replace(/\/$/, '');
@@ -236,17 +358,11 @@ export default function App() {
             } else {
               log('err', `Image upload failed for "${name}": ${upRes.error}. Continuing without image.`);
             }
+          } else if (imagePreview && imagePreview.startsWith('http')) {
+            imageUrl = imagePreview;
           }
 
-          const payload = {
-            name:           product.name,
-            regular_price:  String(product.price),
-            stock_quantity: product.stock,
-            manage_stock:   true,
-            status:         product.status === 'Live' ? 'publish' : 'draft',
-            categories:     product.category ? [{ name: product.category }] : [],
-            ...(imageUrl ? { images: [{ src: imageUrl }] } : {}),
-          };
+          const payload = buildWooPayload(product, imageUrl);
 
           if (action === 'create') {
             log('info', `Creating "${name}" in WooCommerce…`);
@@ -254,28 +370,54 @@ export default function App() {
             if (res.ok) {
               const synced = normalizeProduct(res.data, product.color);
               setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-              setProductList(prev => prev.map(p => p.id === product.id ? { ...synced, _pending: false } : p));
+              dbDeleteQueueItem(key).catch(() => {});
+              setProductList(prev => {
+                const next = prev.map(p =>
+                  (p.sku && p.sku === product.sku) || p.id === product.id
+                    ? { ...synced, _pending: false } : p
+                );
+                productListRef.current = next;
+                dbSaveProducts(next).catch(() => {});
+                return next;
+              });
               log('ok', `"${name}" created successfully.`);
               successCount++;
             } else { log('err', `Create failed for "${name}": ${res.error}`); failCount++; }
 
           } else if (action === 'update') {
             log('info', `Updating "${name}" in WooCommerce…`);
-            const res = await updateProduct(conn, product.id, payload);
+            const res = await updateProduct(conn, resolvedId, payload);
             if (res.ok) {
               const synced = normalizeProduct(res.data, product.color);
               setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-              setProductList(prev => prev.map(p => p.id === synced.id ? { ...synced, _pending: false } : p));
+              dbDeleteQueueItem(key).catch(() => {});
+              setProductList(prev => {
+                const next = prev.map(p =>
+                  (p.sku && p.sku === synced.sku) || p.id === synced.id
+                    ? { ...synced, _pending: false } : p
+                );
+                productListRef.current = next;
+                dbSaveProducts(next).catch(() => {});
+                return next;
+              });
               log('ok', `"${name}" updated successfully.`);
               successCount++;
             } else { log('err', `Update failed for "${name}": ${res.error}`); failCount++; }
 
           } else if (action === 'delete') {
             log('info', `Deleting "${name}" from WooCommerce…`);
-            const res = await deleteProduct(conn, product.id);
+            const res = await deleteProduct(conn, resolvedId);
             if (res.ok) {
               setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-              setProductList(prev => prev.filter(p => p.id !== product.id));
+              dbDeleteQueueItem(key).catch(() => {});
+              setProductList(prev => {
+                const next = prev.filter(p =>
+                  !((p.sku && p.sku === product.sku) || p.id === product.id)
+                );
+                productListRef.current = next;
+                dbSaveProducts(next).catch(() => {});
+                return next;
+              });
               log('ok', `"${name}" deleted successfully.`);
               successCount++;
             } else { log('err', `Delete failed for "${name}": ${res.error}`); failCount++; }
@@ -320,25 +462,83 @@ export default function App() {
 
   // ── Queue management ──────────────────────────────────────────────────────────
   const handleQueueChange = useCallback(({ action, product, imageFile, imagePreview }) => {
-    const key = `${action}_${product.id}`;
+    const key = `${action}_${product.sku || product.id}`;
+
     if (action === 'create') {
       const local = { ...product, id: product.id || tempId(), _pending: true };
-      setProductList(prev => [local, ...prev]);
-      setPendingQueue(prev => ({ ...prev, [key]: { action, product: local, imageFile, imagePreview } }));
+      setProductList(prev => {
+        const next = [local, ...prev];
+        productListRef.current = next;
+        return next;
+      });
+      const item = { action, product: local, imageFile, imagePreview };
+      setPendingQueue(prev => {
+        const next = { ...prev, [key]: item };
+        pendingQueueRef.current = next;
+        return next;
+      });
+      dbUpsertQueueItem(key, item).catch(() => {});
+      dbSaveProducts([local]).catch(() => {});
+
     } else if (action === 'update') {
-      setProductList(prev => prev.map(p => p.id === product.id ? { ...product, _pending: true } : p));
-      setPendingQueue(prev => ({ ...prev, [key]: { action, product, imageFile, imagePreview } }));
+      const updated = { ...product, _pending: true };
+      setProductList(prev => {
+        const next = prev.map(p =>
+          (p.sku && p.sku === product.sku) || p.id === product.id ? updated : p
+        );
+        productListRef.current = next;
+        return next;
+      });
+      const item = { action, product: updated, imageFile, imagePreview };
+      setPendingQueue(prev => {
+        const next = { ...prev, [key]: item };
+        pendingQueueRef.current = next;
+        return next;
+      });
+      dbUpsertQueueItem(key, item).catch(() => {});
+      dbSaveProducts([updated]).catch(() => {});
+
     } else if (action === 'delete') {
-      setProductList(prev => prev.filter(p => p.id !== product.id));
-      setPendingQueue(prev => ({ ...prev, [key]: { action, product } }));
+      // Resolve the real WooCommerce ID now, while the product is still in productList
+      const live = productListRef.current.find(p =>
+        (p.sku && p.sku === product.sku) || p.id === product.id
+      );
+      const productWithId = {
+        ...product,
+        id: (live && isValidWooId(live.id)) ? live.id : product.id,
+      };
+      setProductList(prev => {
+        const next = prev.filter(p =>
+          !((p.sku && p.sku === product.sku) || p.id === product.id)
+        );
+        productListRef.current = next;
+        return next;
+      });
+      const item = { action, product: productWithId };
+      setPendingQueue(prev => {
+        const next = { ...prev, [key]: item };
+        pendingQueueRef.current = next;
+        return next;
+      });
+      dbUpsertQueueItem(key, item).catch(() => {});
     }
   }, []);
 
   const handleRemoveFromQueue = useCallback((key) => {
-    setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
+    setPendingQueue(prev => {
+      const next = { ...prev };
+      delete next[key];
+      pendingQueueRef.current = next;
+      return next;
+    });
+    dbDeleteQueueItem(key).catch(() => {});
   }, []);
 
-  const handleClearQueue = useCallback(() => setPendingQueue({}), []);
+  const handleClearQueue = useCallback(() => {
+    setPendingQueue({});
+    pendingQueueRef.current = {};
+    dbClearQueue().catch(() => {});
+  }, []);
 
   // ── Settings close ────────────────────────────────────────────────────────────
   const handleSettingsClose = useCallback(() => {

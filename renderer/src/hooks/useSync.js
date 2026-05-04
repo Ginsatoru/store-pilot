@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   loadSettings,
   fetchOrders, createProduct, updateProduct, deleteProduct, ftpUploadImage,
-  dbSaveOrders,
+  dbSaveOrders, dbSaveProducts,
 } from '../services/woo';
 import { normalizeProduct } from './useProducts';
 
@@ -15,9 +15,46 @@ const INTERVAL_MS = {
   '6 hours':    6  * 60 * 60 * 1000,
 };
 
-export function useSync({ settingsRef, pendingQueueRef, setProductList, setPendingQueue, setOrderList, handleClearQueue }) {
-  const [syncing, setSyncing]       = useState(false);
-  const [syncLog, setSyncLog]       = useState([]);
+// Returns true only for real WooCommerce integer IDs
+function isValidWooId(id) {
+  if (id === null || id === undefined) return false;
+  if (typeof id === 'string' && (id.startsWith('local_') || id.startsWith('import_'))) return false;
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0;
+}
+
+function buildWooPayload(product, imageUrl) {
+  const resolvedImage =
+    imageUrl ||
+    (product.localPreview && product.localPreview.startsWith('http')
+      ? product.localPreview
+      : null);
+
+  return {
+    name:              product.name,
+    sku:               product.sku || '',
+    type:              product.type || 'simple',
+    status:            product.status === 'Live' ? 'publish' : 'draft',
+    regular_price:     String(product.regular_price || product.price || 0),
+    sale_price:        product.sale_price > 0 ? String(product.sale_price) : '',
+    stock_quantity:    product.stock ?? 0,
+    manage_stock:      product.manage_stock ?? true,
+    stock_status:      product.stock_status || 'instock',
+    categories:        product.categories?.length
+                         ? product.categories
+                         : product.category ? [{ name: product.category }] : [],
+    tags:              product.tags || [],
+    weight:            product.weight || '',
+    dimensions:        product.dimensions || { length: '', width: '', height: '' },
+    short_description: product.short_description || '',
+    description:       product.description || '',
+    ...(resolvedImage ? { images: [{ src: resolvedImage }] } : {}),
+  };
+}
+
+export function useSync({ settingsRef, pendingQueueRef, setProductList, setPendingQueue, setOrderList, handleClearQueue, productListRef }) {
+  const [syncing, setSyncing]           = useState(false);
+  const [syncLog, setSyncLog]           = useState([]);
   const [syncSettings, setSyncSettings] = useState({ autoSync: false, interval: '15 minutes' });
 
   const syncingRef    = useRef(false);
@@ -43,72 +80,108 @@ export function useSync({ settingsRef, pendingQueueRef, setProductList, setPendi
       path: s.conn.ftpPath || 'public_html/wp-content/uploads/',
     } : null;
 
-    // ── Phase 1: Push pending product changes ──────────────────────────────────
+    // ── Phase 1: Push pending product changes ─────────────────────────────────
     const entries = Object.entries(pendingQueueRef.current);
     if (entries.length > 0) {
       log('info', `Pushing ${entries.length} product change(s) to WooCommerce…`);
       let successCount = 0, failCount = 0;
 
       for (const [key, item] of entries) {
-        const { action, product, imageFile, imagePreview } = item;
+        let { action, product, imageFile, imagePreview } = item;
         const name = product?.name || `Product #${product?.id}`;
 
+        // ── Resolve the best available WooCommerce ID ─────────────────────────
+        // The queued product.id may be stale or a temp string.
+        // Look up the current productList by SKU to get the real ID.
+        let resolvedId = product.id;
+        if (product.sku && productListRef?.current) {
+          const live = productListRef.current.find(p => p.sku === product.sku);
+          if (live && isValidWooId(live.id)) {
+            resolvedId = live.id;
+          }
+        }
+
+        // Fall back to create if we still don't have a valid ID for an update
+        if (action === 'update' && !isValidWooId(resolvedId)) {
+          log('info', `"${name}" has no valid WooCommerce ID — treating as create.`);
+          action = 'create';
+        }
+
         try {
-          let imageUrl = null;
-          if (imagePreview && ftpSettings) {
+          let imageUrl     = null;
+          let finalPreview = product.localPreview || null;
+
+          if (imagePreview && imagePreview.startsWith('data:') && ftpSettings) {
             log('info', `Uploading image for "${name}"…`);
             const base64   = imagePreview.includes(',') ? imagePreview.split(',')[1] : imagePreview;
             const ext      = imageFile?.name?.split('.').pop() || 'jpg';
-            const fileName = `product-${product.id}-${Date.now()}.${ext}`;
+            const fileName = `product-${product.sku || product.id}-${Date.now()}.${ext}`;
             const upRes    = await ftpUploadImage({ ftpSettings, fileData: base64, fileName });
             if (upRes.ok) {
               const storeBase    = (s?.conn?.storeUrl || '').replace(/\/$/, '');
               const uploadFolder = (ftpSettings.path || '').replace(/^public_html/, '').replace(/\/$/, '');
-              imageUrl = `${storeBase}${uploadFolder}/${fileName}`;
+              imageUrl     = `${storeBase}${uploadFolder}/${fileName}`;
+              finalPreview = imageUrl;
               log('info', `Image uploaded for "${name}".`);
             } else {
-              log('err', `Image upload failed for "${name}": ${upRes.error}. Continuing without image.`);
+              log('err', `Image upload failed for "${name}": ${upRes.error}. Continuing without new image.`);
             }
+          } else if (imagePreview && imagePreview.startsWith('http')) {
+            finalPreview = imagePreview;
           }
 
-          const payload = {
-            name:           product.name,
-            regular_price:  String(product.price),
-            stock_quantity: product.stock,
-            manage_stock:   true,
-            status:         product.status === 'Live' ? 'publish' : 'draft',
-            categories:     product.category ? [{ name: product.category }] : [],
-            ...(imageUrl ? { images: [{ src: imageUrl }] } : {}),
-          };
+          const payload = buildWooPayload(product, imageUrl);
 
           if (action === 'create') {
             log('info', `Creating "${name}" in WooCommerce…`);
             const res = await createProduct(conn, payload);
             if (res.ok) {
-              const synced = normalizeProduct(res.data, product.color);
+              const synced = normalizeProduct(res.data, product.color, finalPreview);
               setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-              setProductList(prev => prev.map(p => p.id === product.id ? { ...synced, _pending: false } : p));
+              setProductList(prev => {
+                const next = prev.map(p =>
+                  (p.sku && p.sku === product.sku) || p.id === product.id
+                    ? { ...synced, _pending: false }
+                    : p
+                );
+                dbSaveProducts(next).catch(() => {});
+                return next;
+              });
               log('ok', `"${name}" created successfully.`);
               successCount++;
             } else { log('err', `Create failed for "${name}": ${res.error}`); failCount++; }
 
           } else if (action === 'update') {
             log('info', `Updating "${name}" in WooCommerce…`);
-            const res = await updateProduct(conn, product.id, payload);
+            const res = await updateProduct(conn, resolvedId, payload);
             if (res.ok) {
-              const synced = normalizeProduct(res.data, product.color);
+              const synced = normalizeProduct(res.data, product.color, finalPreview);
               setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-              setProductList(prev => prev.map(p => p.id === synced.id ? { ...synced, _pending: false } : p));
+              setProductList(prev => {
+                const next = prev.map(p =>
+                  (p.sku && p.sku === synced.sku) || p.id === synced.id
+                    ? { ...synced, _pending: false }
+                    : p
+                );
+                dbSaveProducts(next).catch(() => {});
+                return next;
+              });
               log('ok', `"${name}" updated successfully.`);
               successCount++;
             } else { log('err', `Update failed for "${name}": ${res.error}`); failCount++; }
 
           } else if (action === 'delete') {
             log('info', `Deleting "${name}" from WooCommerce…`);
-            const res = await deleteProduct(conn, product.id);
+            const res = await deleteProduct(conn, resolvedId);
             if (res.ok) {
               setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-              setProductList(prev => prev.filter(p => p.id !== product.id));
+              setProductList(prev => {
+                const next = prev.filter(p =>
+                  !((p.sku && p.sku === product.sku) || p.id === product.id)
+                );
+                dbSaveProducts(next).catch(() => {});
+                return next;
+              });
               log('ok', `"${name}" deleted successfully.`);
               successCount++;
             } else { log('err', `Delete failed for "${name}": ${res.error}`); failCount++; }
@@ -121,7 +194,7 @@ export function useSync({ settingsRef, pendingQueueRef, setProductList, setPendi
       log('info', 'No pending product changes to push.');
     }
 
-    // ── Phase 2: Pull orders ───────────────────────────────────────────────────
+    // ── Phase 2: Pull orders ──────────────────────────────────────────────────
     log('info', 'Fetching latest orders from WooCommerce…');
     try {
       const res = await fetchOrders(conn, { perPage: 100, page: 1 });
@@ -140,9 +213,9 @@ export function useSync({ settingsRef, pendingQueueRef, setProductList, setPendi
     log('ok', 'Sync complete.');
     syncingRef.current = false;
     setSyncing(false);
-  }, [log, settingsRef, pendingQueueRef, setProductList, setPendingQueue, setOrderList]);
+  }, [log, settingsRef, pendingQueueRef, setProductList, setPendingQueue, setOrderList, productListRef]);
 
-  // ── Auto sync timer ────────────────────────────────────────────────────────
+  // ── Auto sync timer ───────────────────────────────────────────────────────
   useEffect(() => {
     if (autoSyncTimer.current) clearInterval(autoSyncTimer.current);
     if (syncSettings.autoSync) {

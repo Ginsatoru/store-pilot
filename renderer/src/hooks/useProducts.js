@@ -1,19 +1,49 @@
 import { useState, useCallback, useRef } from 'react';
 import { fetchProducts, dbLoadProducts, dbSaveProducts, dbUpsertQueueItem, dbDeleteQueueItem, dbClearQueue, dbLoadQueue } from '../services/woo';
 
-export function normalizeProduct(p, existingColor) {
+export function normalizeProduct(p, existingColor, existingLocalPreview) {
   const colors = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
+  const sku = p.sku && p.sku.trim() !== '' ? p.sku.trim() : String(p.id);
+
+  // Priority: caller-supplied > already on object > WooCommerce image
+  // Never let a WooCommerce pull overwrite a locally-set preview
+  const localPreview =
+    existingLocalPreview !== undefined
+      ? existingLocalPreview
+      : p.localPreview !== undefined
+        ? p.localPreview
+        : p.images?.[0]?.src || null;
+
   return {
-    id:           p.id,
-    name:         p.name || 'Untitled',
-    category:     p.categories?.[0]?.name || 'Uncategorized',
-    price:        parseFloat(p.price || p.regular_price || 0),
-    stock:        p.stock_quantity ?? 0,
-    date:         p.date_created || new Date().toISOString(),
-    status:       p.status === 'publish' ? 'Live' : 'Draft',
-    color:        existingColor || colors[p.id % colors.length],
-    localPreview: null,
-    _raw:         p,
+    id:                p.id,
+    sku,
+    name:              p.name || 'Untitled',
+    slug:              p.slug || '',
+    type:              p.type || 'simple',
+    permalink:         p.permalink || '',
+    status:            p.status === 'publish' ? 'Live' : (p.status === 'Live' ? 'Live' : 'Draft'),
+    _status:           p.status,
+    price:             parseFloat(p.price || 0),
+    regular_price:     parseFloat(p.regular_price || 0),
+    sale_price:        parseFloat(p.sale_price || 0),
+    on_sale:           p.on_sale || false,
+    stock:             p.stock_quantity ?? p.stock ?? 0,
+    stock_status:      p.stock_status || 'instock',
+    manage_stock:      p.manage_stock || false,
+    category:          p.categories?.[0]?.name || p.category || 'Uncategorized',
+    categories:        p.categories || [],
+    tags:              p.tags || [],
+    images:            p.images || [],
+    description:       p.description || '',
+    short_description: p.short_description || '',
+    weight:            p.weight || '',
+    dimensions:        p.dimensions || { length: '', width: '', height: '' },
+    date:              p.date_created || p.date || new Date().toISOString(),
+    date_modified:     p.date_modified || '',
+    color:             existingColor || p.color || colors[p.id % colors.length],
+    localPreview,
+    _pending:          p._pending || false,
+    _raw:              p._raw || p,
   };
 }
 
@@ -29,8 +59,9 @@ export function useProducts() {
   const [pendingQueue, setPendingQueue]     = useState({});
 
   const pendingQueueRef = useRef({});
+  // Always-current snapshot — safe to read inside async callbacks without stale closure
+  const productListRef  = useRef([]);
 
-  // Keep ref in sync
   const updateQueue = useCallback((updater) => {
     setPendingQueue(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
@@ -39,12 +70,31 @@ export function useProducts() {
     });
   }, []);
 
-  // ── Load cached products + queue from SQLite ────────────────────────────────
+  const setProductListSynced = useCallback((updater) => {
+    setProductList(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      productListRef.current = next;
+      return next;
+    });
+  }, []);
+
+  // ── Load cached products + queue from SQLite ──────────────────────────────
   const loadFromDb = useCallback(async () => {
     try {
       const [pRes, qRes] = await Promise.all([dbLoadProducts(), dbLoadQueue()]);
       if (pRes.ok && pRes.data.length > 0) {
-        setProductList(pRes.data);
+        // Migration: hydrate localPreview from images[0].src when missing
+        let needsResave = false;
+        const hydrated = pRes.data.map(p => {
+          if (!p.localPreview && p.images?.[0]?.src) {
+            needsResave = true;
+            return { ...p, localPreview: p.images[0].src };
+          }
+          return p;
+        });
+        if (needsResave) dbSaveProducts(hydrated).catch(() => {});
+        productListRef.current = hydrated;
+        setProductList(hydrated);
         setFetched(true);
         setProductLoading(false);
       }
@@ -54,51 +104,108 @@ export function useProducts() {
     }
   }, [updateQueue]);
 
-  // ── Fetch from WooCommerce and cache ─────────────────────────────────────────
+  // ── Fetch all pages from WooCommerce ──────────────────────────────────────
   const doFetchProducts = useCallback(async (conn) => {
     setProductLoading(true);
     setProductError(null);
     try {
-      const res = await fetchProducts(conn, { perPage: 100, page: 1 });
-      if (res.ok) {
-        const normalized = (res.data || []).map(p => normalizeProduct(p));
-        setProductList(normalized);
+      let allProducts = [];
+      let page = 1;
+      const perPage = 100;
+
+      while (true) {
+        const res = await fetchProducts(conn, { perPage, page });
+        if (!res.ok) {
+          setProductError(res.error || 'Failed to fetch products');
+          break;
+        }
+        const batch = res.data || [];
+        allProducts = allProducts.concat(batch);
+        if (batch.length < perPage) break;
+        page++;
+      }
+
+      if (allProducts.length > 0) {
+        // Use ref — not stale closure — to get the current list
+        const existingMap = new Map(productListRef.current.map(p => [p.sku, p]));
+
+        const seen = new Map();
+        for (const p of allProducts) {
+          const rawSku   = p.sku && p.sku.trim() !== '' ? p.sku.trim() : String(p.id);
+          const existing = existingMap.get(rawSku);
+
+          const normalized = normalizeProduct(
+            p,
+            existing?.color,
+            // Preserve our localPreview; only fall back to Woo for brand-new products
+            existing !== undefined ? existing.localPreview : undefined,
+          );
+
+          if (!seen.has(normalized.sku)) seen.set(normalized.sku, normalized);
+        }
+
+        const deduped = Array.from(seen.values());
+        productListRef.current = deduped;
+        setProductList(deduped);
         setFetched(true);
-        dbSaveProducts(normalized).catch(() => {});
-      } else {
-        setProductError(res.error || 'Failed to fetch products');
+        dbSaveProducts(deduped).catch(() => {});
       }
     } catch (e) {
-      // Offline — use cached data silently if we already have it
       if (!fetched) setProductError(e.message || 'Unknown error');
     }
     setProductLoading(false);
   }, [fetched]);
 
-  // ── Queue management ──────────────────────────────────────────────────────────
+  // ── Queue management ──────────────────────────────────────────────────────
   const handleQueueChange = useCallback(({ action, product, imageFile, imagePreview }) => {
-    const key = `${action}_${product.id}`;
+    const key = `${action}_${product.sku || product.id}`;
 
     if (action === 'create') {
-      const local = { ...product, id: product.id || tempId(), _pending: true };
-      setProductList(prev => [local, ...prev]);
+      const local = {
+        ...product,
+        id:           product.id || tempId(),
+        localPreview: imagePreview || product.localPreview || null,
+        _pending:     true,
+      };
+      setProductListSynced(prev => {
+        const next = [local, ...prev];
+        dbSaveProducts(next).catch(() => {});
+        return next;
+      });
       const item = { action, product: local, imageFile, imagePreview };
       updateQueue(prev => ({ ...prev, [key]: item }));
       dbUpsertQueueItem(key, item).catch(() => {});
 
     } else if (action === 'update') {
-      setProductList(prev => prev.map(p => p.id === product.id ? { ...product, _pending: true } : p));
-      const item = { action, product, imageFile, imagePreview };
+      const updated = {
+        ...product,
+        localPreview: imagePreview || product.localPreview || null,
+        _pending:     true,
+      };
+      setProductListSynced(prev => {
+        const next = prev.map(p =>
+          (p.sku && p.sku === product.sku) || p.id === product.id ? updated : p
+        );
+        dbSaveProducts(next).catch(() => {});
+        return next;
+      });
+      const item = { action, product: updated, imageFile, imagePreview };
       updateQueue(prev => ({ ...prev, [key]: item }));
       dbUpsertQueueItem(key, item).catch(() => {});
 
     } else if (action === 'delete') {
-      setProductList(prev => prev.filter(p => p.id !== product.id));
+      setProductListSynced(prev => {
+        const next = prev.filter(p =>
+          !((p.sku && p.sku === product.sku) || p.id === product.id)
+        );
+        dbSaveProducts(next).catch(() => {});
+        return next;
+      });
       const item = { action, product };
       updateQueue(prev => ({ ...prev, [key]: item }));
       dbUpsertQueueItem(key, item).catch(() => {});
     }
-  }, [updateQueue]);
+  }, [updateQueue, setProductListSynced]);
 
   const handleRemoveFromQueue = useCallback((key) => {
     updateQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
@@ -111,7 +218,7 @@ export function useProducts() {
   }, [updateQueue]);
 
   return {
-    productList, setProductList,
+    productList, setProductList: setProductListSynced,
     productLoading, setProductLoading,
     productError, setProductError,
     fetched, setFetched,

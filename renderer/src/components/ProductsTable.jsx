@@ -6,34 +6,35 @@ import {
 
 const GRID_STYLE = {
   display: 'grid',
-  gridTemplateColumns: '40px 2fr 1fr 1fr 1fr 1.2fr 1fr 1fr',
+  gridTemplateColumns: '40px 2fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr',
 };
 
-const CELL               = 'px-3 py-2.5 flex items-center';
-const CELL_INDENT        = 'py-2.5 flex items-center';
-const INDENT_STYLE       = { paddingLeft: 'calc(0.75rem + 14px)', paddingRight: '0.75rem' };
-const STATUS_INDENT_STYLE = { paddingLeft: 'calc(0.75rem + 18px)', paddingRight: '0.75rem' };
+const CELL        = 'px-3 py-2.5 flex items-center';
+const CELL_INNER  = 'px-3 py-2.5 flex items-center';
 
-const FILTERS = ['Columns', 'Department', 'Site', 'Lifecycle', 'Status', 'Entity'];
+const FILTERS = ['Columns', 'Category', 'Status', 'Stock'];
 
 const COL_HEADERS = [
-  { key: 'name',      label: 'Name'       },
-  { key: 'category',  label: 'Category'   },
-  { key: 'price',     label: 'Price'      },
-  { key: 'stock',     label: 'Stock Qty'  },
-  { key: 'date',      label: 'Start date' },
-  { key: 'lifecycle', label: 'Lifecycle'  },
-  { key: 'status',    label: 'Status', statusCol: true },
+  { key: 'name',         label: 'Name'         },
+  { key: 'sku',          label: 'SKU'          },
+  { key: 'category',     label: 'Category'     },
+  { key: 'regular_price',label: 'Price'        },
+  { key: 'sale_price',   label: 'Sale'         },
+  { key: 'stock',        label: 'Stock'        },
+  { key: 'stock_status', label: 'Stock Status' },
+  { key: 'status',       label: 'Status'       },
 ];
 
 function exportToCSV(products) {
-  const headers = ['ID', 'Name', 'Category', 'Price', 'Stock', 'Status', 'Date'];
+  const headers = ['SKU', 'Name', 'Category', 'Regular Price', 'Sale Price', 'Stock', 'Stock Status', 'Status', 'Date'];
   const rows = products.map(p => [
-    p.id,
+    `"${(p.sku || '').replace(/"/g, '""')}"`,
     `"${(p.name || '').replace(/"/g, '""')}"`,
     `"${(p.category || '').replace(/"/g, '""')}"`,
-    p.price?.toFixed(2) ?? '0.00',
+    p.regular_price?.toFixed(2) ?? '0.00',
+    p.sale_price > 0 ? p.sale_price.toFixed(2) : '',
     p.stock ?? 0,
+    p.stock_status || '',
     p.status || '',
     p.date ? new Date(p.date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
   ]);
@@ -56,11 +57,11 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
   const allSelected = products.length > 0 && selected.size === products.length;
 
   const toggleAll = () =>
-    setSelected(allSelected ? new Set() : new Set(products.map(p => p.id)));
+    setSelected(allSelected ? new Set() : new Set(products.map(p => p.sku || p.id)));
 
-  const toggleOne = id => {
+  const toggleOne = key => {
     const next = new Set(selected);
-    next.has(id) ? next.delete(id) : next.add(id);
+    next.has(key) ? next.delete(key) : next.add(key);
     setSelected(next);
   };
 
@@ -72,7 +73,7 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
   const sorted = [...products].sort((a, b) => {
     if (!sortField) return 0;
     let va = a[sortField], vb = b[sortField];
-    if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+    if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb || '').toLowerCase(); }
     if (va < vb) return sortDir === 'asc' ? -1 : 1;
     if (va > vb) return sortDir === 'asc' ? 1 : -1;
     return 0;
@@ -80,7 +81,7 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
 
   const handleExport = () => {
     const toExport = selected.size > 0
-      ? sorted.filter(p => selected.has(p.id))
+      ? sorted.filter(p => selected.has(p.sku || p.id))
       : sorted;
     exportToCSV(toExport);
   };
@@ -108,7 +109,7 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
             <RiSearchLine className="text-gray-400 dark:text-white/30 flex-shrink-0" size={13} />
             <input
               type="text"
-              placeholder="Search"
+              placeholder="Search name, SKU…"
               value={search}
               onChange={e => onSearch(e.target.value)}
               className="text-[12px] bg-transparent outline-none text-gray-700 dark:text-white/80 placeholder-gray-400 dark:placeholder-white/25 w-36"
@@ -117,10 +118,7 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
         </div>
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            onClick={onAddNew}
-            className="w-7 h-7 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150"
-          >
+          <button onClick={onAddNew} className="w-7 h-7 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150">
             <RiAddLine size={14} />
           </button>
           <button className="w-7 h-7 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors duration-150">
@@ -160,15 +158,14 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
             <button
               key={col.key}
               onClick={() => handleSort(col.key)}
-              className="relative flex items-center py-2.5 text-[11px] font-medium text-[#888] dark:text-white/30 hover:text-[#333] dark:hover:text-white/60 transition-colors text-left group w-full"
-              style={{ paddingLeft: '0.75rem', paddingRight: '0.75rem' }}
+              className="relative flex items-center py-2.5 text-[11px] font-medium text-[#888] dark:text-white/30 hover:text-[#333] dark:hover:text-white/60 transition-colors text-left group w-full px-3"
             >
-              <span className="absolute text-[#ccc] dark:text-white/15 group-hover:text-[#aaa] dark:group-hover:text-white/30 transition-colors" style={{ left: '0.75rem' }}>
+              <span className="absolute left-3 text-[#ccc] dark:text-white/15 group-hover:text-[#aaa] dark:group-hover:text-white/30 transition-colors">
                 {sortField === col.key
                   ? (sortDir === 'asc' ? <RiArrowUpLine size={10} /> : <RiArrowDownLine size={10} />)
                   : <RiArrowUpLine size={10} />}
               </span>
-              <span style={{ paddingLeft: col.statusCol ? '12px' : '14px' }}>{col.label}</span>
+              <span className="pl-3.5">{col.label}</span>
             </button>
           ))}
         </div>
@@ -183,10 +180,10 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
                 <div className={CELL}><div className="w-3.5 h-3.5 rounded bg-gray-100 dark:bg-white/10" /></div>
                 <div className={`${CELL} gap-2.5`}>
                   <div className="w-6 h-6 rounded bg-gray-100 dark:bg-white/10 flex-shrink-0" />
-                  <div className="h-3 rounded bg-gray-100 dark:bg-white/10 w-36" />
+                  <div className="h-3 rounded bg-gray-100 dark:bg-white/10 w-32" />
                 </div>
-                {[80, 60, 40, 72, 40, 50].map((w, j) => (
-                  <div key={j} className={CELL_INDENT} style={INDENT_STYLE}>
+                {[50, 70, 55, 45, 40, 60, 50].map((w, j) => (
+                  <div key={j} className={CELL_INNER}>
                     <div className="h-3 rounded bg-gray-100 dark:bg-white/10" style={{ width: w }} />
                   </div>
                 ))}
@@ -203,26 +200,30 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
           </div>
         ) : (
           sorted.map(product => {
-            const isSelected = selected.has(product.id);
+            const rowKey   = product.sku || product.id;
+            const isSelected = selected.has(rowKey);
             return (
               <div
-                key={product.id}
+                key={rowKey}
                 onClick={() => onRowClick?.(product)}
                 style={GRID_STYLE}
                 className={`border-b border-[#f5f3f0] dark:border-white/5 cursor-pointer transition-colors duration-100 ${
                   isSelected ? 'bg-yellow-50 dark:bg-yellow-400/10' : 'hover:bg-gray-50 dark:hover:bg-white/5'
                 }`}
               >
-                <div className={CELL} onClick={e => { e.stopPropagation(); toggleOne(product.id); }}>
+                {/* Checkbox */}
+                <div className={CELL} onClick={e => { e.stopPropagation(); toggleOne(rowKey); }}>
                   <input
                     type="checkbox"
                     checked={isSelected}
-                    onChange={() => toggleOne(product.id)}
+                    onChange={() => toggleOne(rowKey)}
                     className="w-3.5 h-3.5 rounded border-[#ccc] dark:border-white/20 cursor-pointer accent-[#1a1a1a] dark:accent-white"
                   />
                 </div>
+
+                {/* Name */}
                 <div className={`${CELL} gap-2.5 min-w-0`}>
-                  <Avatar name={product.name} color={product.color} active={isSelected} image={product.localPreview || product._raw?.images?.[0]?.src} />
+                  <Avatar name={product.name} color={product.color} active={isSelected} image={product.localPreview || product.images?.[0]?.src} />
                   <div className="flex flex-col min-w-0">
                     <span className="text-[12px] font-medium text-[#1a1a1a] dark:text-white/80 truncate" title={product.name}>
                       {product.name}
@@ -232,26 +233,48 @@ export default function ProductsTable({ products, allProducts, search, onSearch,
                     )}
                   </div>
                 </div>
-                <div className={CELL_INDENT} style={INDENT_STYLE}>
-                  <span className="text-[12px] text-[#777] dark:text-white/40">{product.category}</span>
+
+                {/* SKU */}
+                <div className={CELL_INNER}>
+                  <span className="text-[11px] font-mono text-[#888] dark:text-white/40 truncate" title={product.sku}>
+                    {product.sku || <span className="text-[#ccc] dark:text-white/15">—</span>}
+                  </span>
                 </div>
-                <div className={CELL_INDENT} style={INDENT_STYLE}>
-                  <span className="text-[12px] font-mono text-[#1a1a1a] dark:text-white/70">${product.price.toFixed(2)}</span>
+
+                {/* Category */}
+                <div className={CELL_INNER}>
+                  <span className="text-[12px] text-[#777] dark:text-white/40 truncate">{product.category}</span>
                 </div>
-                <div className={CELL_INDENT} style={INDENT_STYLE}>
+
+                {/* Regular Price */}
+                <div className={CELL_INNER}>
+                  <span className="text-[12px] font-mono text-[#1a1a1a] dark:text-white/70">
+                    ${(product.regular_price || product.price || 0).toFixed(2)}
+                  </span>
+                </div>
+
+                {/* Sale Price */}
+                <div className={CELL_INNER}>
+                  {product.sale_price > 0
+                    ? <span className="text-[12px] font-mono text-emerald-600 dark:text-emerald-400">${product.sale_price.toFixed(2)}</span>
+                    : <span className="text-[11px] text-[#ccc] dark:text-white/15">—</span>
+                  }
+                </div>
+
+                {/* Stock Qty */}
+                <div className={CELL_INNER}>
                   <span className={`text-[12px] ${product.stock === 0 ? 'text-[#ccc] dark:text-white/20' : 'text-[#555] dark:text-white/50'}`}>
                     {product.stock === 0 ? '—' : product.stock}
                   </span>
                 </div>
-                <div className={CELL_INDENT} style={INDENT_STYLE}>
-                  <span className="text-[11px] font-mono text-[#888] dark:text-white/35">
-                    {new Date(product.date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: '2-digit' })}
-                  </span>
+
+                {/* Stock Status */}
+                <div className={CELL_INNER}>
+                  <StockStatusBadge status={product.stock_status} />
                 </div>
-                <div className={CELL_INDENT} style={INDENT_STYLE}>
-                  <span className="text-[11px] text-[#ccc] dark:text-white/15">—</span>
-                </div>
-                <div className={CELL_INDENT} style={STATUS_INDENT_STYLE}>
+
+                {/* Status */}
+                <div className={CELL_INNER}>
                   <StatusBadge status={product.status} />
                 </div>
               </div>
@@ -312,6 +335,21 @@ function StatusBadge({ status }) {
     }`}>
       <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400' : 'bg-[#ccc] dark:bg-white/20'}`} />
       {status}
+    </span>
+  );
+}
+
+function StockStatusBadge({ status }) {
+  const map = {
+    instock:     { label: 'In Stock',     color: 'text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-400' },
+    outofstock:  { label: 'Out of Stock', color: 'text-red-500 dark:text-red-400',         dot: 'bg-red-400'     },
+    onbackorder: { label: 'Backorder',    color: 'text-yellow-600 dark:text-yellow-400',   dot: 'bg-yellow-400'  },
+  };
+  const s = map[status] || { label: status || '—', color: 'text-[#999] dark:text-white/30', dot: 'bg-[#ccc] dark:bg-white/20' };
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${s.color}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+      {s.label}
     </span>
   );
 }

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 const db = require('./db');
-const { wooRequest, ftpTestConnection, ftpUploadImage } = require('./woo');
+const { wooRequest, wooRequestWithRetry, ftpTestConnection, ftpUploadImage } = require('./woo');
 const { activateLicense, checkCachedLicense, validateLicense, getCachedLicense, clearLicenseCache, getMachineId } = require('./license');
 
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
@@ -55,29 +55,47 @@ function registerIpcHandlers() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
+  // Fetch all products across all pages
   ipcMain.handle('woo:fetchProducts', async (_e, settings, params = {}) => {
     try {
-      const query = new URLSearchParams({
-        per_page: params.perPage || 100,
-        page:     params.page    || 1,
-        ...(params.search ? { search: params.search } : {}),
-      }).toString();
-      return await wooRequest(settings, `/products?${query}`);
+      const perPage = 100;
+      let page = 1;
+      let allProducts = [];
+
+      while (true) {
+        const query = new URLSearchParams({
+          per_page: perPage,
+          page,
+          orderby: 'date',
+          order:   'desc',
+          ...(params.search ? { search: params.search } : {}),
+        }).toString();
+
+        const res = await wooRequest(settings, `/products?${query}`);
+        if (!res.ok) return res;
+
+        const batch = res.data || [];
+        allProducts = allProducts.concat(batch);
+        if (batch.length < perPage) break;
+        page++;
+      }
+
+      return { ok: true, data: allProducts };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('woo:updateProduct', async (_e, settings, productId, data) => {
-    try { return await wooRequest(settings, `/products/${productId}`, 'PUT', data); }
+    try { return await wooRequestWithRetry(settings, `/products/${productId}`, 'PUT', data); }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('woo:createProduct', async (_e, settings, data) => {
-    try { return await wooRequest(settings, '/products', 'POST', data); }
+    try { return await wooRequestWithRetry(settings, '/products', 'POST', data); }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('woo:deleteProduct', async (_e, settings, productId) => {
-    try { return await wooRequest(settings, `/products/${productId}?force=true`, 'DELETE'); }
+    try { return await wooRequestWithRetry(settings, `/products/${productId}?force=true`, 'DELETE'); }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
@@ -139,7 +157,6 @@ function registerIpcHandlers() {
     return { ok: true };
   });
 
-  // Machine ID
   ipcMain.handle('license:getMachineId', () => {
     return getMachineId();
   });
