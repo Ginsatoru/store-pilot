@@ -55,8 +55,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   onLicenseWarning: (cb) => {
-    const handler = (_e, payload) => cb(payload); // { reason, remaining }
+    const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('license:warning', handler);
     return () => ipcRenderer.removeListener('license:warning', handler);
+  },
+
+  onFetchProgress: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on('woo:fetchProgress', handler);
+    return () => ipcRenderer.removeListener('woo:fetchProgress', handler);
   },
 });

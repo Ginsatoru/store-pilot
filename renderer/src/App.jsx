@@ -43,6 +43,7 @@ export default function App() {
     productError, setProductError,
     fetched, setFetched,
     pendingQueue, setPendingQueue,
+    fetchProgress,
     loadFromDb,
     doFetchProducts,
     handleQueueChange,
@@ -102,7 +103,6 @@ export default function App() {
     setLicenseInvalidReason(null);
     setLicenseWarning(null);
 
-    // Save license to profile if not already stored
     if (window.electronAPI?.dbLoadProfile && window.electronAPI?.dbSaveProfile) {
       window.electronAPI.dbLoadProfile().then(res => {
         if (!res?.ok || !res.data) {
@@ -115,33 +115,43 @@ export default function App() {
       }).catch(() => {});
     }
 
-    // Load products + queue from SQLite
-    loadFromDb().catch(e => console.error('DB load error:', e));
-
-    // Load orders from SQLite
     dbLoadOrders().then(res => {
       if (res.ok && Array.isArray(res.data) && res.data.length > 0) setOrderList(res.data);
     }).catch(() => {});
 
-    // Load settings
-    loadSettings().then(s => {
-      if (s?.conn?.storeUrl && s?.conn?.consumerKey) {
-        setSettings(s.conn);
-        settingsRef.current = s.conn;
-      } else {
-        setProductError('No store connection configured. Open Settings to connect your store.');
-        setProductLoading(false);
-      }
+    // ── Offline-first bootstrap ───────────────────────────────────────────
+    // 1. Load settings first so we have connection details available
+    // 2. Load from SQLite
+    // 3. If SQLite is empty AND connection is configured → bootstrap from WooCommerce
+    // 4. UI always reads from SQLite (handled inside doFetchProducts)
+    loadSettings().then(async (s) => {
       if (s?.sync)              setSyncSettings(s.sync);
       if (s?.appearance?.theme) setTheme(s.appearance.theme);
-    }).catch(() => { setProductError('Failed to load settings.'); setProductLoading(false); });
+
+      const conn = (s?.conn?.storeUrl && s?.conn?.consumerKey) ? s.conn : null;
+      if (conn) {
+        setSettings(conn);
+        settingsRef.current = conn;
+      }
+
+      // Step 1: Load from SQLite
+      await loadFromDb();
+
+      // Step 2: Check if SQLite is empty
+      const dbCheck = await window.electronAPI.dbLoadProducts();
+      const isEmpty = !dbCheck?.ok || !dbCheck?.data?.length;
+
+      // Step 3: Bootstrap from WooCommerce if empty and connection exists
+      if (isEmpty && conn) {
+        await doFetchProducts(conn);
+      } else if (!conn) {
+        // No connection configured — stop loading, show empty state
+        setProductLoading(false);
+      }
+    }).catch(() => { setProductLoading(false); });
   }, [license]);
 
-  // ── Fetch from WooCommerce when settings ready and DB is empty ────────────
-  useEffect(() => {
-    if (settings && !fetched) doFetchProducts(settings);
-  }, [settings, fetched]);
-
+  // ── Manual refresh from WooCommerce ──────────────────────────────────────
   const handleRefreshProducts = useCallback(() => {
     if (settings) doFetchProducts(settings);
   }, [settings, doFetchProducts]);
@@ -178,6 +188,7 @@ export default function App() {
             settings={settings}
             productList={productList}
             loading={productLoading}
+            fetchProgress={fetchProgress}
             error={productError}
             setError={setProductError}
             onRefresh={handleRefreshProducts}

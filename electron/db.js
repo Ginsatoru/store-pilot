@@ -10,6 +10,7 @@ function getDb() {
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     initSchema();
+    migrateSchema();
   }
   return db;
 }
@@ -45,6 +46,34 @@ function initSchema() {
   `);
 }
 
+// ── Migration: rebuild products table if it's missing the sku column ──────────
+function migrateSchema() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(products)").all();
+    const hasSkuCol = cols.some(c => c.name === 'sku');
+
+    if (!hasSkuCol) {
+      // Old table exists without sku column — drop and recreate cleanly
+      db.exec(`
+        DROP TABLE IF EXISTS products;
+        CREATE TABLE products (
+          sku         TEXT PRIMARY KEY,
+          data        TEXT NOT NULL,
+          updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+      `);
+    }
+  } catch (e) {
+    console.error('[db] migrateSchema error:', e.message);
+  }
+}
+
+// Derive a stable SKU key — same logic as normalizeProduct in the renderer
+function deriveSku(p) {
+  if (p.sku && String(p.sku).trim() !== '') return String(p.sku).trim();
+  return String(p.id);
+}
+
 // ── Products ──────────────────────────────────────────────────────────────────
 function loadProducts() {
   try {
@@ -61,7 +90,10 @@ function saveProducts(products) {
       ON CONFLICT(sku) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
     `);
     const tx = getDb().transaction((items) => {
-      for (const p of items) insert.run(String(p.sku), JSON.stringify(p));
+      for (const p of items) {
+        const sku = deriveSku(p);
+        insert.run(sku, JSON.stringify(p));
+      }
     });
     tx(products);
     return { ok: true };

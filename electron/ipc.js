@@ -55,30 +55,53 @@ function registerIpcHandlers() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
-  // Fetch all products across all pages
-  ipcMain.handle('woo:fetchProducts', async (_e, settings, params = {}) => {
+  // Fetch all products across all pages — emits woo:fetchProgress events
+  ipcMain.handle('woo:fetchProducts', async (event, settings, params = {}) => {
     try {
       const perPage = 100;
-      let page = 1;
       let allProducts = [];
 
-      while (true) {
-        const query = new URLSearchParams({
-          per_page: perPage,
-          page,
-          orderby: 'date',
-          order:   'desc',
-          ...(params.search ? { search: params.search } : {}),
-        }).toString();
+      // Page 1 — also read x-wp-total header for total count
+      const searchParam = params.search ? `&search=${encodeURIComponent(params.search)}` : '';
+      const firstRes = await wooRequest(settings, `/products?per_page=${perPage}&page=1&orderby=date&order=desc${searchParam}`);
+      if (!firstRes.ok) return firstRes;
 
-        const res = await wooRequest(settings, `/products?${query}`);
-        if (!res.ok) return res;
+      const totalProducts = parseInt(firstRes.headers?.['x-wp-total'] ?? firstRes.headers?.['X-WP-Total'] ?? '0', 10);
+      const firstBatch = firstRes.data || [];
+      allProducts = allProducts.concat(firstBatch);
 
-        const batch = res.data || [];
-        allProducts = allProducts.concat(batch);
-        if (batch.length < perPage) break;
-        page++;
+      const emitProgress = (loaded, total) => {
+        const percent = total > 0 ? Math.min(Math.round((loaded / total) * 100), 99) : 0;
+        try { event.sender.send('woo:fetchProgress', { loaded, total, percent }); } catch (_) {}
+      };
+
+      emitProgress(allProducts.length, totalProducts);
+
+      if (firstBatch.length >= perPage) {
+        let page = 2;
+        while (true) {
+          const query = new URLSearchParams({
+            per_page: perPage,
+            page,
+            orderby: 'date',
+            order:   'desc',
+            ...(params.search ? { search: params.search } : {}),
+          }).toString();
+
+          const res = await wooRequest(settings, `/products?${query}`);
+          if (!res.ok) return res;
+
+          const batch = res.data || [];
+          allProducts = allProducts.concat(batch);
+          emitProgress(allProducts.length, totalProducts);
+
+          if (batch.length < perPage) break;
+          page++;
+        }
       }
+
+      // Final — 100%
+      try { event.sender.send('woo:fetchProgress', { loaded: allProducts.length, total: allProducts.length, percent: 100 }); } catch (_) {}
 
       return { ok: true, data: allProducts };
     } catch (e) { return { ok: false, error: e.message }; }
