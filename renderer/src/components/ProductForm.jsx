@@ -123,7 +123,7 @@ export default function ProductForm({ product, onSave, onDelete, onClose, saving
               <label className="w-full aspect-video rounded-xl border-2 border-dashed border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 hover:border-gray-400 dark:hover:border-white/20 hover:bg-gray-100 dark:hover:bg-white/10 transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer">
                 <RiUploadCloud2Line size={28} className="text-gray-400 dark:text-white/20" />
                 <span className="text-[12px] font-medium text-[#777] dark:text-white/40">Click to select image</span>
-                <span className="text-[11px] text-[#aaa] dark:text-white/25">JPG, PNG, WebP — uploads on sync</span>
+                <span className="text-[11px] text-[#aaa] dark:text-white/25">JPG, PNG, WebP. uploads on sync</span>
                 <input type="file" accept="image/*" className="hidden" onChange={handleImage} />
               </label>
             )}

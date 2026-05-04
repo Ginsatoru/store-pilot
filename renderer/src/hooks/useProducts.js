@@ -1,19 +1,20 @@
-import { useState, useCallback, useRef } from 'react';
-import { fetchProducts, dbLoadProducts, dbSaveProducts, dbUpsertQueueItem, dbDeleteQueueItem, dbClearQueue, dbLoadQueue } from '../services/woo';
+import { useState, useCallback } from 'react';
+import {
+  fetchProducts,
+  dbLoadProducts, dbSaveProducts,
+  dbLoadQueue, dbUpsertQueueItem, dbDeleteQueueItem, dbClearQueue,
+} from '../services/woo';
+
+const COLORS = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
 
 export function normalizeProduct(p, existingColor, existingLocalPreview) {
-  const colors = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#f97316','#14b8a6'];
   const sku = p.sku && p.sku.trim() !== '' ? p.sku.trim() : String(p.id);
-
-  // Priority: caller-supplied > already on object > WooCommerce image
-  // Never let a WooCommerce pull overwrite a locally-set preview
   const localPreview =
     existingLocalPreview !== undefined
       ? existingLocalPreview
       : p.localPreview !== undefined
         ? p.localPreview
         : p.images?.[0]?.src || null;
-
   return {
     id:                p.id,
     sku,
@@ -40,15 +41,35 @@ export function normalizeProduct(p, existingColor, existingLocalPreview) {
     dimensions:        p.dimensions || { length: '', width: '', height: '' },
     date:              p.date_created || p.date || new Date().toISOString(),
     date_modified:     p.date_modified || '',
-    color:             existingColor || p.color || colors[p.id % colors.length],
+    color:             existingColor || p.color || COLORS[Math.abs(p.id || 0) % COLORS.length],
     localPreview,
     _pending:          p._pending || false,
     _raw:              p._raw || p,
   };
 }
 
-export function tempId() {
+function tempId() {
   return `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// Apply pending queue state to product list so UI is always accurate
+function applyQueueToProducts(products, queue) {
+  const deleteSkus  = new Set();
+  const deleteIds   = new Set();
+  const pendingSkus = new Set();
+
+  for (const item of Object.values(queue)) {
+    if (item.action === 'delete') {
+      if (item.product?.sku) deleteSkus.add(item.product.sku);
+      if (item.product?.id)  deleteIds.add(String(item.product.id));
+    } else {
+      if (item.product?.sku) pendingSkus.add(item.product.sku);
+    }
+  }
+
+  return products
+    .filter(p => !deleteSkus.has(p.sku) && !deleteIds.has(String(p.id)))
+    .map(p => ({ ...p, _pending: pendingSkus.has(p.sku) || p._pending || false }));
 }
 
 export function useProducts() {
@@ -58,106 +79,61 @@ export function useProducts() {
   const [fetched, setFetched]               = useState(false);
   const [pendingQueue, setPendingQueue]     = useState({});
 
-  const pendingQueueRef = useRef({});
-  // Always-current snapshot — safe to read inside async callbacks without stale closure
-  const productListRef  = useRef([]);
-
-  const updateQueue = useCallback((updater) => {
-    setPendingQueue(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      pendingQueueRef.current = next;
-      return next;
-    });
-  }, []);
-
-  const setProductListSynced = useCallback((updater) => {
-    setProductList(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      productListRef.current = next;
-      return next;
-    });
-  }, []);
-
-  // ── Load cached products + queue from SQLite ──────────────────────────────
+  // ── Boot: load from SQLite, apply queue ───────────────────────────────────
   const loadFromDb = useCallback(async () => {
-    try {
-      const [pRes, qRes] = await Promise.all([dbLoadProducts(), dbLoadQueue()]);
-      if (pRes.ok && pRes.data.length > 0) {
-        // Migration: hydrate localPreview from images[0].src when missing
-        let needsResave = false;
-        const hydrated = pRes.data.map(p => {
-          if (!p.localPreview && p.images?.[0]?.src) {
-            needsResave = true;
-            return { ...p, localPreview: p.images[0].src };
-          }
-          return p;
-        });
-        if (needsResave) dbSaveProducts(hydrated).catch(() => {});
-        productListRef.current = hydrated;
-        setProductList(hydrated);
-        setFetched(true);
-        setProductLoading(false);
-      }
-      if (qRes.ok) updateQueue(qRes.data);
-    } catch (e) {
-      console.error('DB load error:', e);
-    }
-  }, [updateQueue]);
+    const [pRes, qRes] = await Promise.all([dbLoadProducts(), dbLoadQueue()]);
+    const queue = (qRes.ok && qRes.data) ? qRes.data : {};
+    setPendingQueue(queue);
 
-  // ── Fetch all pages from WooCommerce ──────────────────────────────────────
+    if (pRes.ok && pRes.data?.length > 0) {
+      const products = applyQueueToProducts(pRes.data, queue);
+      setProductList(products);
+      setFetched(true);
+      setProductLoading(false);
+    }
+
+    return queue;
+  }, []);
+
+  // ── Fetch from WooCommerce ─────────────────────────────────────────────────
   const doFetchProducts = useCallback(async (conn) => {
     setProductLoading(true);
     setProductError(null);
     try {
-      let allProducts = [];
-      let page = 1;
-      const perPage = 100;
-
+      let all = [], page = 1;
       while (true) {
-        const res = await fetchProducts(conn, { perPage, page });
-        if (!res.ok) {
-          setProductError(res.error || 'Failed to fetch products');
-          break;
-        }
+        const res = await fetchProducts(conn, { perPage: 100, page });
+        if (!res.ok) { setProductError(res.error || 'Failed to fetch products'); break; }
         const batch = res.data || [];
-        allProducts = allProducts.concat(batch);
-        if (batch.length < perPage) break;
+        all = all.concat(batch);
+        if (batch.length < 100) break;
         page++;
       }
 
-      if (allProducts.length > 0) {
-        // Use ref — not stale closure — to get the current list
-        const existingMap = new Map(productListRef.current.map(p => [p.sku, p]));
+      if (all.length > 0) {
+        const dbRes = await dbLoadProducts();
+        const existingMap = new Map((dbRes.ok ? dbRes.data : []).map(p => [p.sku, p]));
 
         const seen = new Map();
-        for (const p of allProducts) {
-          const rawSku   = p.sku && p.sku.trim() !== '' ? p.sku.trim() : String(p.id);
-          const existing = existingMap.get(rawSku);
-
-          const normalized = normalizeProduct(
-            p,
-            existing?.color,
-            // Preserve our localPreview; only fall back to Woo for brand-new products
-            existing !== undefined ? existing.localPreview : undefined,
-          );
-
+        for (const p of all) {
+          const existing = existingMap.get(p.sku && p.sku.trim() !== '' ? p.sku.trim() : String(p.id));
+          const normalized = normalizeProduct(p, existing?.color, existing?.localPreview);
           if (!seen.has(normalized.sku)) seen.set(normalized.sku, normalized);
         }
+        const products = Array.from(seen.values());
+        await dbSaveProducts(products);
 
-        const deduped = Array.from(seen.values());
-        productListRef.current = deduped;
-        setProductList(deduped);
+        const qRes = await dbLoadQueue();
+        const queue = (qRes.ok && qRes.data) ? qRes.data : {};
+        setProductList(applyQueueToProducts(products, queue));
         setFetched(true);
-        dbSaveProducts(deduped).catch(() => {});
       }
-    } catch (e) {
-      if (!fetched) setProductError(e.message || 'Unknown error');
-    }
+    } catch (e) { setProductError(e.message || 'Unknown error'); }
     setProductLoading(false);
-  }, [fetched]);
+  }, []);
 
-  // ── Queue management ──────────────────────────────────────────────────────
-  const handleQueueChange = useCallback(({ action, product, imageFile, imagePreview }) => {
+  // ── Queue operations ───────────────────────────────────────────────────────
+  const handleQueueChange = useCallback(async ({ action, product, imageFile, imagePreview }) => {
     const key = `${action}_${product.sku || product.id}`;
 
     if (action === 'create') {
@@ -167,14 +143,15 @@ export function useProducts() {
         localPreview: imagePreview || product.localPreview || null,
         _pending:     true,
       };
-      setProductListSynced(prev => {
-        const next = [local, ...prev];
-        dbSaveProducts(next).catch(() => {});
-        return next;
-      });
-      const item = { action, product: local, imageFile, imagePreview };
-      updateQueue(prev => ({ ...prev, [key]: item }));
-      dbUpsertQueueItem(key, item).catch(() => {});
+      const dbRes = await dbLoadProducts();
+      const existing = dbRes.ok ? dbRes.data : [];
+      await dbSaveProducts([local, ...existing.filter(p => p.sku !== local.sku && p.id !== local.id)]);
+
+      const item = { action, product: local, imageFile: null, imagePreview: imagePreview || null };
+      await dbUpsertQueueItem(key, item);
+
+      setProductList(prev => [local, ...prev.filter(p => p.sku !== local.sku && p.id !== local.id)]);
+      setPendingQueue(prev => ({ ...prev, [key]: item }));
 
     } else if (action === 'update') {
       const updated = {
@@ -182,47 +159,53 @@ export function useProducts() {
         localPreview: imagePreview || product.localPreview || null,
         _pending:     true,
       };
-      setProductListSynced(prev => {
-        const next = prev.map(p =>
-          (p.sku && p.sku === product.sku) || p.id === product.id ? updated : p
-        );
-        dbSaveProducts(next).catch(() => {});
-        return next;
-      });
-      const item = { action, product: updated, imageFile, imagePreview };
-      updateQueue(prev => ({ ...prev, [key]: item }));
-      dbUpsertQueueItem(key, item).catch(() => {});
+      const dbRes = await dbLoadProducts();
+      const existing = dbRes.ok ? dbRes.data : [];
+      await dbSaveProducts(existing.map(p =>
+        (p.sku && p.sku === product.sku) || p.id === product.id ? updated : p
+      ));
+
+      const item = { action, product: updated, imageFile: null, imagePreview: imagePreview || null };
+      await dbUpsertQueueItem(key, item);
+
+      setProductList(prev => prev.map(p =>
+        (p.sku && p.sku === product.sku) || p.id === product.id ? updated : p
+      ));
+      setPendingQueue(prev => ({ ...prev, [key]: item }));
 
     } else if (action === 'delete') {
-      setProductListSynced(prev => {
-        const next = prev.filter(p =>
-          !((p.sku && p.sku === product.sku) || p.id === product.id)
-        );
-        dbSaveProducts(next).catch(() => {});
-        return next;
-      });
-      const item = { action, product };
-      updateQueue(prev => ({ ...prev, [key]: item }));
-      dbUpsertQueueItem(key, item).catch(() => {});
+      const dbRes = await dbLoadProducts();
+      const existing = dbRes.ok ? dbRes.data : [];
+      await dbSaveProducts(existing.filter(p =>
+        !((p.sku && p.sku === product.sku) || p.id === product.id)
+      ));
+
+      const item = { action, product, imageFile: null, imagePreview: null };
+      await dbUpsertQueueItem(key, item);
+
+      setProductList(prev => prev.filter(p =>
+        !((p.sku && p.sku === product.sku) || p.id === product.id)
+      ));
+      setPendingQueue(prev => ({ ...prev, [key]: item }));
     }
-  }, [updateQueue, setProductListSynced]);
+  }, []);
 
-  const handleRemoveFromQueue = useCallback((key) => {
-    updateQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
-    dbDeleteQueueItem(key).catch(() => {});
-  }, [updateQueue]);
+  const handleRemoveFromQueue = useCallback(async (key) => {
+    await dbDeleteQueueItem(key);
+    setPendingQueue(prev => { const n = { ...prev }; delete n[key]; return n; });
+  }, []);
 
-  const handleClearQueue = useCallback(() => {
-    updateQueue({});
-    dbClearQueue().catch(() => {});
-  }, [updateQueue]);
+  const handleClearQueue = useCallback(async () => {
+    await dbClearQueue();
+    setPendingQueue({});
+  }, []);
 
   return {
-    productList, setProductList: setProductListSynced,
+    productList, setProductList,
     productLoading, setProductLoading,
     productError, setProductError,
     fetched, setFetched,
-    pendingQueue, pendingQueueRef,
+    pendingQueue, setPendingQueue,
     loadFromDb,
     doFetchProducts,
     handleQueueChange,
