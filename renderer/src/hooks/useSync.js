@@ -19,7 +19,6 @@ const INTERVAL_MS = {
   '6 hours':    6  * 60 * 60 * 1000,
 };
 
-// Log entry types with labels and colors (used in SyncLog UI)
 export const LOG_TYPES = {
   info:    { icon: '●', label: 'info',    color: 'text-blue-400'  },
   ok:      { icon: '✓', label: 'ok',      color: 'text-green-400' },
@@ -61,211 +60,243 @@ function buildWooPayload(product, imageUrl) {
 }
 
 export function useSync({ settingsRef, setProductList, setPendingQueue, setOrderList, syncSettings }) {
-  const [syncing, setSyncing]   = useState(false);
-  const [syncLog, setSyncLog]   = useState([]);
-  const syncingRef              = useRef(false);
-  const autoSyncTimer           = useRef(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncLog, setSyncLog] = useState([]);
+  const syncingRef            = useRef(false);
+  const stopRequestedRef      = useRef(false);
+  const autoSyncTimer         = useRef(null);
 
-  // Each entry: { type, msg, time, group? }
   const log = useCallback((type, msg, group) =>
     setSyncLog(prev => [...prev, { type, msg, group, time: new Date().toLocaleTimeString() }])
   , []);
 
   const section = useCallback((msg) => log('section', msg), [log]);
 
+  const stopSync = useCallback(() => {
+    if (syncingRef.current) {
+      stopRequestedRef.current = true;
+    }
+  }, []);
+
   const runSync = useCallback(async () => {
     if (syncingRef.current) return;
-    syncingRef.current = true;
+    syncingRef.current    = true;
+    stopRequestedRef.current = false;
     setSyncing(true);
     setSyncLog([]);
 
-    let s;
-    try { s = await loadSettings(); }
-    catch (e) {
-      log('err', 'Failed to load settings: ' + e.message);
-      syncingRef.current = false;
-      setSyncing(false);
-      return;
-    }
-
-    const conn = settingsRef.current;
-    const ftpSettings = s?.conn?.ftpHost ? {
-      host: s.conn.ftpHost, port: s.conn.ftpPort || '21',
-      user: s.conn.ftpUser, pass: s.conn.ftpPass,
-      path: s.conn.ftpPath || 'public_html/wp-content/uploads/',
-    } : null;
-
-    // ── Products ─────────────────────────────────────────────────────────────
-    const qRes = await dbLoadQueue();
-    const queue = (qRes.ok && qRes.data) ? qRes.data : {};
-    const entries = Object.entries(queue);
-
-    section('Products');
-
-    if (entries.length === 0) {
-      log('info', 'No pending changes.');
-    } else {
-      log('info', `${entries.length} change(s) · batches of ${BATCH_SIZE}`);
-
-      // Load current local DB state as working set
-      const pRes = await dbLoadProducts();
-      let latestProducts = pRes.ok ? [...pRes.data] : [];
-
-      let successCount = 0;
-      let failCount    = 0;
-
-      const processEntry = async ([key, item]) => {
-        let { action, product, imagePreview } = item;
-        const name = product?.name || `#${product?.id}`;
-
-        let resolvedId = product.id;
-        if (product.sku) {
-          const live = latestProducts.find(p => p.sku === product.sku);
-          if (live && isValidWooId(live.id)) resolvedId = live.id;
-        }
-
-        if (action === 'update' && !isValidWooId(resolvedId)) action = 'create';
-
-        if (action === 'delete' && !isValidWooId(resolvedId)) {
-          // Product was local-only — just remove from queue, already removed from DB
-          await dbDeleteQueueItem(key);
-          return { key, action: 'delete_local', product, ok: true };
-        }
-
-        try {
-          let imageUrl     = null;
-          let finalPreview = product.localPreview || null;
-
-          if (imagePreview && imagePreview.startsWith('data:') && ftpSettings) {
-            const base64   = imagePreview.includes(',') ? imagePreview.split(',')[1] : imagePreview;
-            const fileName = `product-${product.sku || product.id}-${Date.now()}.jpg`;
-            const upRes    = await ftpUploadImage({ ftpSettings, fileData: base64, fileName });
-            if (upRes.ok) {
-              const storeBase    = (s?.conn?.storeUrl || '').replace(/\/$/, '');
-              const uploadFolder = (ftpSettings.path || '').replace(/^public_html/, '').replace(/\/$/, '');
-              imageUrl     = `${storeBase}${uploadFolder}/${fileName}`;
-              finalPreview = imageUrl;
-            } else {
-              log('err', `Image upload failed for "${name}": ${upRes.error}`);
-            }
-          } else if (imagePreview && imagePreview.startsWith('http')) {
-            finalPreview = imagePreview;
-          }
-
-          const payload = buildWooPayload({ ...product, localPreview: finalPreview }, imageUrl);
-
-          if (action === 'create') {
-            const res = await createProduct(conn, payload);
-            if (res.ok) {
-              await dbDeleteQueueItem(key);
-              return { key, action, product, synced: normalizeProduct(res.data, product.color, finalPreview), ok: true };
-            }
-            return { key, action, product, ok: false, error: res.error };
-
-          } else if (action === 'update') {
-            const res = await updateProduct(conn, resolvedId, payload);
-            if (res.ok) {
-              await dbDeleteQueueItem(key);
-              return { key, action, product, synced: normalizeProduct(res.data, product.color, finalPreview), ok: true };
-            }
-            return { key, action, product, ok: false, error: res.error };
-
-          } else if (action === 'delete') {
-            const res = await deleteProduct(conn, resolvedId);
-            if (res.ok) {
-              await dbDeleteQueueItem(key);
-              return { key, action, product, ok: true };
-            }
-            return { key, action, product, ok: false, error: res.error };
-          }
-        } catch (e) {
-          return { key, action, product, ok: false, error: e.message };
-        }
-      };
-
-      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-        const batch        = entries.slice(i, i + BATCH_SIZE);
-        const batchNum     = Math.floor(i / BATCH_SIZE) + 1;
-        const totalBatches = Math.ceil(entries.length / BATCH_SIZE);
-
-        log('info', `Batch ${batchNum}/${totalBatches} (${batch.length} items)`, 'batch');
-
-        const results = await Promise.all(batch.map(processEntry));
-
-        for (const result of results) {
-          const name = result.product?.name || `#${result.product?.id}`;
-
-          if (!result.ok) {
-            log('err', `${name}: ${result.error}`);
-            failCount++;
-            continue;
-          }
-
-          if (result.action === 'delete_local') {
-            log('info', `${name} — removed (local only)`);
-            successCount++;
-          } else if (result.action === 'create') {
-            // Replace temp local product with the real WooCommerce product
-            latestProducts = latestProducts.map(p =>
-              (p.sku && p.sku === result.product.sku) || p.id === result.product.id
-                ? { ...result.synced, _pending: false } : p
-            );
-            log('ok', `Created ${name}`);
-            successCount++;
-          } else if (result.action === 'update') {
-            latestProducts = latestProducts.map(p =>
-              (p.sku && p.sku === result.synced.sku) || p.id === result.synced.id
-                ? { ...result.synced, _pending: false } : p
-            );
-            log('ok', `Updated ${name}`);
-            successCount++;
-          } else if (result.action === 'delete') {
-            latestProducts = latestProducts.filter(p =>
-              !((p.sku && p.sku === result.product.sku) || p.id === result.product.id)
-            );
-            log('ok', `Deleted ${name}`);
-            successCount++;
-          }
-
-          setPendingQueue(prev => { const n = { ...prev }; delete n[result.key]; return n; });
-        }
-
-        // Persist updated product list back to DB after every batch
-        await dbSaveProducts(latestProducts);
-      }
-
-      // Re-read from DB as the single source of truth and update UI
-      const finalDbRes = await dbLoadProducts();
-      const finalProducts = finalDbRes.ok ? finalDbRes.data : latestProducts;
-      setProductList([...finalProducts]);
-
-      log(
-        failCount === 0 ? 'ok' : 'info',
-        `${successCount} succeeded${failCount > 0 ? `, ${failCount} failed` : ''}`
-      );
-    }
-
-    // ── Orders ────────────────────────────────────────────────────────────────
-    section('Orders');
     try {
-      const res = await fetchOrders(conn, { perPage: 100, page: 1 });
-      if (res.ok) {
-        const orders = res.data || [];
-        // Save orders to local DB
-        await dbSaveOrders(orders);
-        setOrderList(orders);
-        log('ok', `${orders.length} orders downloaded`);
-      } else {
-        log('err', `Fetch failed: ${res.error}`);
+      let s;
+      try { s = await loadSettings(); }
+      catch (e) {
+        log('err', 'Failed to load settings: ' + e.message);
+        return;
       }
+
+      const conn = settingsRef.current;
+      const ftpSettings = s?.conn?.ftpHost ? {
+        host: s.conn.ftpHost, port: s.conn.ftpPort || '21',
+        user: s.conn.ftpUser, pass: s.conn.ftpPass,
+        path: s.conn.ftpPath || 'public_html/wp-content/uploads/',
+      } : null;
+
+      // ── Products ───────────────────────────────────────────────────────────
+      const qRes = await dbLoadQueue();
+      const queue = (qRes.ok && qRes.data) ? qRes.data : {};
+      const entries = Object.entries(queue);
+
+      section('Products');
+
+      if (entries.length === 0) {
+        log('info', 'No pending changes.');
+      } else {
+        log('info', `${entries.length} change(s) · batches of ${BATCH_SIZE}`);
+
+        const pRes = await dbLoadProducts();
+        let latestProducts = pRes.ok ? [...pRes.data] : [];
+
+        let successCount = 0;
+        let failCount    = 0;
+
+        const processEntry = async ([key, item]) => {
+          let { action, product, imagePreview } = item;
+          const name = product?.name || `#${product?.id}`;
+
+          let resolvedId = product.id;
+          if (product.sku) {
+            const live = latestProducts.find(p => p.sku === product.sku);
+            if (live && isValidWooId(live.id)) resolvedId = live.id;
+          }
+
+          if (action === 'update' && !isValidWooId(resolvedId)) action = 'create';
+
+          if (action === 'delete' && !isValidWooId(resolvedId)) {
+            await dbDeleteQueueItem(key);
+            return { key, action: 'delete_local', product, ok: true };
+          }
+
+          try {
+            let imageUrl     = null;
+            let finalPreview = product.localPreview || null;
+
+            if (imagePreview && imagePreview.startsWith('data:') && ftpSettings) {
+              const base64   = imagePreview.includes(',') ? imagePreview.split(',')[1] : imagePreview;
+              const fileName = `product-${product.sku || product.id}-${Date.now()}.jpg`;
+              const upRes    = await ftpUploadImage({ ftpSettings, fileData: base64, fileName });
+              if (upRes.ok) {
+                const storeBase    = (s?.conn?.storeUrl || '').replace(/\/$/, '');
+                const uploadFolder = (ftpSettings.path || '').replace(/^public_html/, '').replace(/\/$/, '');
+                imageUrl     = `${storeBase}${uploadFolder}/${fileName}`;
+                finalPreview = imageUrl;
+              } else {
+                log('err', `Image upload failed for "${name}": ${upRes.error}`);
+              }
+            } else if (imagePreview && imagePreview.startsWith('http')) {
+              finalPreview = imagePreview;
+            }
+
+            const payload = buildWooPayload({ ...product, localPreview: finalPreview }, imageUrl);
+
+            if (action === 'create') {
+              const res = await createProduct(conn, payload);
+              if (res.ok) {
+                await dbDeleteQueueItem(key);
+                return { key, action, product, synced: normalizeProduct(res.data, product.color, finalPreview), ok: true };
+              }
+              return { key, action, product, ok: false, error: res.error };
+
+            } else if (action === 'update') {
+              const res = await updateProduct(conn, resolvedId, payload);
+              if (res.ok) {
+                await dbDeleteQueueItem(key);
+                return { key, action, product, synced: normalizeProduct(res.data, product.color, finalPreview), ok: true };
+              }
+              return { key, action, product, ok: false, error: res.error };
+
+            } else if (action === 'delete') {
+              const res = await deleteProduct(conn, resolvedId);
+              if (res.ok) {
+                await dbDeleteQueueItem(key);
+                return { key, action, product, ok: true };
+              }
+              // Treat "already gone" as success — product no longer exists on server
+              const alreadyGone =
+                res.status === 404 ||
+                (typeof res.error === 'string' &&
+                  (res.error.toLowerCase().includes('invalid id') ||
+                   res.error.toLowerCase().includes('woo_id_required')));
+              if (alreadyGone) {
+                await dbDeleteQueueItem(key);
+                return { key, action, product, ok: true };
+              }
+              return { key, action, product, ok: false, error: res.error };
+            }
+          } catch (e) {
+            return { key, action, product, ok: false, error: e.message };
+          }
+        };
+
+        for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+          // Check stop before each batch
+          if (stopRequestedRef.current) {
+            log('info', 'Sync stopped by user.');
+            await dbSaveProducts(latestProducts);
+            const finalDbRes = await dbLoadProducts();
+            setProductList([...(finalDbRes.ok ? finalDbRes.data : latestProducts)]);
+            return;
+          }
+
+          const batch        = entries.slice(i, i + BATCH_SIZE);
+          const batchNum     = Math.floor(i / BATCH_SIZE) + 1;
+          const totalBatches = Math.ceil(entries.length / BATCH_SIZE);
+
+          log('info', `Batch ${batchNum}/${totalBatches} (${batch.length} items)`, 'batch');
+
+          const results = await Promise.all(batch.map(processEntry));
+
+          for (const result of results) {
+            if (!result) continue;
+
+            const name = result.product?.name || `#${result.product?.id}`;
+
+            if (!result.ok) {
+              log('err', `${name}: ${result.error}`);
+              failCount++;
+              continue;
+            }
+
+            if (result.action === 'delete_local') {
+              log('info', `${name} removed (local only)`);
+              successCount++;
+            } else if (result.action === 'create') {
+              latestProducts = latestProducts.map(p =>
+                (p.sku && p.sku === result.product.sku) || p.id === result.product.id
+                  ? { ...result.synced, _pending: false } : p
+              );
+              log('ok', `Created ${name}`);
+              successCount++;
+            } else if (result.action === 'update') {
+              latestProducts = latestProducts.map(p =>
+                (p.sku && p.sku === result.synced.sku) || p.id === result.synced.id
+                  ? { ...result.synced, _pending: false } : p
+              );
+              log('ok', `Updated ${name}`);
+              successCount++;
+            } else if (result.action === 'delete') {
+              latestProducts = latestProducts.filter(p =>
+                !((p.sku && p.sku === result.product.sku) || p.id === result.product.id)
+              );
+              log('ok', `Deleted ${name}`);
+              successCount++;
+            }
+
+            setPendingQueue(prev => { const n = { ...prev }; delete n[result.key]; return n; });
+          }
+
+          await dbSaveProducts(latestProducts);
+        }
+
+        // Re-read from DB as single source of truth and update UI
+        const finalDbRes = await dbLoadProducts();
+        const finalProducts = finalDbRes.ok ? finalDbRes.data : latestProducts;
+        setProductList([...finalProducts]);
+
+        log(
+          failCount === 0 ? 'ok' : 'info',
+          `${successCount} succeeded${failCount > 0 ? `, ${failCount} failed` : ''}`
+        );
+      }
+
+      // ── Orders ─────────────────────────────────────────────────────────────
+      if (stopRequestedRef.current) {
+        log('info', 'Sync stopped by user.');
+        return;
+      }
+
+      section('Orders');
+      try {
+        const res = await fetchOrders(conn, { perPage: 100, page: 1 });
+        if (res.ok) {
+          const orders = res.data || [];
+          await dbSaveOrders(orders);
+          setOrderList(orders);
+          log('ok', `${orders.length} orders downloaded`);
+        } else {
+          log('err', `Fetch failed: ${res.error}`);
+        }
+      } catch (e) {
+        log('err', e.message);
+      }
+
+      section('Done');
+
     } catch (e) {
-      log('err', e.message);
+      log('err', `Sync failed: ${e.message}`);
+    } finally {
+      syncingRef.current       = false;
+      stopRequestedRef.current = false;
+      setSyncing(false);
     }
-
-    section('Done');
-
-    syncingRef.current = false;
-    setSyncing(false);
   }, [log, section, settingsRef, setProductList, setPendingQueue, setOrderList]);
 
   useEffect(() => {
@@ -277,5 +308,5 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
     return () => { if (autoSyncTimer.current) clearInterval(autoSyncTimer.current); };
   }, [syncSettings, runSync]);
 
-  return { syncing, syncLog, setSyncLog, runSync };
+  return { syncing, syncLog, setSyncLog, runSync, stopSync };
 }

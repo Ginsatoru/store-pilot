@@ -84,17 +84,26 @@ function loadProducts() {
 
 function saveProducts(products) {
   try {
-    const insert = getDb().prepare(`
-      INSERT INTO products (sku, data, updated_at)
-      VALUES (?, ?, strftime('%s','now'))
-      ON CONFLICT(sku) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-    `);
+    const skus = products.map(deriveSku);
+
     const tx = getDb().transaction((items) => {
+      if (items.length === 0) {
+        getDb().prepare('DELETE FROM products').run();
+      } else {
+        const placeholders = skus.map(() => '?').join(',');
+        getDb().prepare(`DELETE FROM products WHERE sku NOT IN (${placeholders})`).run(...skus);
+      }
+
+      const insert = getDb().prepare(`
+        INSERT INTO products (sku, data, updated_at)
+        VALUES (?, ?, strftime('%s','now'))
+        ON CONFLICT(sku) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+      `);
       for (const p of items) {
-        const sku = deriveSku(p);
-        insert.run(sku, JSON.stringify(p));
+        insert.run(deriveSku(p), JSON.stringify(p));
       }
     });
+
     tx(products);
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }

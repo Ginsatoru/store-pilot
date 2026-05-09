@@ -1,15 +1,78 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  RiRefreshLine, RiDeleteBinLine, RiCheckLine,
+  RiRefreshLine, RiCheckLine,
   RiCheckboxCircleLine, RiCloseCircleLine, RiInformationLine,
   RiUploadCloud2Line, RiFileList3Line, RiImageLine,
   RiAddLine, RiEditLine, RiDeleteBin2Line, RiTimeLine,
+  RiStopCircleLine,
 } from 'react-icons/ri';
+
+const ITEM_HEIGHT = 64;
+const OVERSCAN    = 5;
+
+function VirtualQueueList({ entries, syncing }) {
+  const containerRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [height, setHeight]       = useState(400);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setHeight(e.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const onScroll = useCallback((e) => setScrollTop(e.currentTarget.scrollTop), []);
+
+  const totalHeight = entries.length * ITEM_HEIGHT;
+  const startIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - OVERSCAN);
+  const endIdx   = Math.min(entries.length, Math.ceil((scrollTop + height) / ITEM_HEIGHT) + OVERSCAN);
+  const visible  = entries.slice(startIdx, endIdx);
+
+  return (
+    <div
+      ref={containerRef}
+      onScroll={onScroll}
+      className="flex-1 overflow-y-auto"
+      style={{ position: 'relative' }}
+    >
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ position: 'absolute', top: startIdx * ITEM_HEIGHT, left: 0, right: 0 }}>
+          {visible.map(([key, item]) => (
+            <QueueRow key={key} item={item} syncing={syncing} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QueueRow({ item, syncing }) {
+  return (
+    <div
+      className="bg-gray-100 dark:bg-white/10 rounded-xl px-3.5 py-3 flex items-center gap-3 mb-2"
+      style={{ height: ITEM_HEIGHT - 8 }}
+    >
+      <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-200 dark:bg-white/10 flex-shrink-0 flex items-center justify-center">
+        {item.imagePreview
+          ? <img src={item.imagePreview} alt="" className="w-full h-full object-cover" />
+          : item.product?.localPreview || item.product?._raw?.images?.[0]?.src
+            ? <img src={item.product.localPreview || item.product._raw.images[0].src} alt="" className="w-full h-full object-cover" />
+            : <RiImageLine size={14} className="text-gray-300 dark:text-white/20" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[12px] font-semibold text-[#1a1a1a] dark:text-white/80 truncate">{item.product?.name}</p>
+        <ActionBadge action={item.action} hasImage={!!item.imagePreview} />
+      </div>
+    </div>
+  );
+}
 
 export default function Sync({
   syncing, syncLog, setSyncLog,
   pendingQueue, productList,
-  onSyncNow, onRemoveFromQueue, onClearQueue,
+  onSyncNow, onStopSync,
   syncSettings, online,
 }) {
   const logRef = useRef(null);
@@ -18,12 +81,7 @@ export default function Sync({
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' });
   }, [syncLog]);
 
-  const pendingEntries = Object.entries(pendingQueue || {});
-
-  const handleClearAll = () => {
-    if (!confirm('Discard all pending changes? This cannot be undone.')) return;
-    onClearQueue();
-  };
+  const pendingEntries = useMemo(() => Object.entries(pendingQueue || {}), [pendingQueue]);
 
   const handleSyncNow = () => {
     if (!online) return;
@@ -40,7 +98,9 @@ export default function Sync({
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold text-[#1a1a1a] dark:text-white/80">Pending Changes</span>
           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-            pendingEntries.length > 0 ? 'bg-yellow-100 dark:bg-yellow-400/15 text-yellow-700 dark:text-yellow-400' : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+            pendingEntries.length > 0
+              ? 'bg-yellow-100 dark:bg-yellow-400/15 text-yellow-700 dark:text-yellow-400'
+              : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
           }`}>
             {pendingEntries.length}
           </span>
@@ -51,19 +111,20 @@ export default function Sync({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {pendingEntries.length > 0 && (
+          {syncing && onStopSync && (
             <button
-              onClick={handleClearAll}
-              className="text-[12px] font-medium text-gray-500 dark:text-white/40 bg-gray-100 dark:bg-white/10 hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-600 dark:hover:text-red-400 px-4 py-2 rounded-xl transition-colors"
+              onClick={onStopSync}
+              className="flex items-center gap-1.5 text-[12px] font-medium bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 px-4 py-2 rounded-xl hover:bg-yellow-300 dark:hover:bg-yellow-400 hover:text-[#1a1a1a] dark:hover:text-[#1a1a1a] transition-colors"
             >
-              Clear All
+              <RiStopCircleLine size={13} />
+              Stop
             </button>
           )}
           <button
             onClick={handleSyncNow}
             disabled={syncing || !online}
             title={!online ? 'You are offline' : undefined}
-            className="flex items-center gap-1.5 text-[12px] font-medium bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 px-4 py-2 rounded-xl hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 text-[12px] font-medium bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 px-4 py-2 rounded-xl hover:bg-yellow-300 dark:hover:bg-yellow-400 hover:text-[#1a1a1a] dark:hover:text-[#1a1a1a] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RiRefreshLine size={13} className={syncing ? 'animate-spin' : ''} />
             {syncing ? 'Syncing...' : 'Sync Now'}
@@ -72,8 +133,8 @@ export default function Sync({
       </div>
 
       <div className="flex-1 overflow-hidden flex gap-4">
-        {/* Queue */}
-        <div className="flex flex-col gap-2 w-52 flex-shrink-0 overflow-y-auto">
+        {/* Queue — virtualized, no delete */}
+        <div className="flex flex-col w-52 flex-shrink-0 overflow-hidden">
           {pendingEntries.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-2 text-center py-16">
               <RiCheckLine size={24} className="text-[#bbb] dark:text-white/20" />
@@ -81,27 +142,10 @@ export default function Sync({
               <p className="text-[11px] text-[#bbb] dark:text-white/20">No pending changes.</p>
             </div>
           ) : (
-            pendingEntries.map(([key, item]) => (
-              <div key={key} className="bg-gray-100 dark:bg-white/10 rounded-xl px-3.5 py-3 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-200 dark:bg-white/10 flex-shrink-0 flex items-center justify-center">
-                  {item.imagePreview
-                    ? <img src={item.imagePreview} alt="" className="w-full h-full object-cover" />
-                    : item.product?.localPreview || item.product?._raw?.images?.[0]?.src
-                      ? <img src={item.product.localPreview || item.product._raw.images[0].src} alt="" className="w-full h-full object-cover" />
-                      : <RiImageLine size={14} className="text-gray-300 dark:text-white/20" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-semibold text-[#1a1a1a] dark:text-white/80 truncate">{item.product?.name}</p>
-                  <ActionBadge action={item.action} hasImage={!!item.imagePreview} />
-                </div>
-                <button
-                  onClick={() => onRemoveFromQueue(key)}
-                  className="w-6 h-6 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-500 dark:hover:text-red-400 text-[#ccc] dark:text-white/20 flex items-center justify-center transition-colors flex-shrink-0"
-                >
-                  <RiDeleteBinLine size={13} />
-                </button>
-              </div>
-            ))
+            <VirtualQueueList
+              entries={pendingEntries}
+              syncing={syncing}
+            />
           )}
         </div>
 
@@ -116,7 +160,10 @@ export default function Sync({
               )}
             </div>
             {syncLog.length > 0 && (
-              <button onClick={() => setSyncLog([])} className="text-[11px] text-[#aaa] dark:text-white/30 hover:text-[#555] dark:hover:text-white/60 transition-colors">
+              <button
+                onClick={() => setSyncLog([])}
+                className="text-[11px] text-[#aaa] dark:text-white/30 hover:text-[#555] dark:hover:text-white/60 transition-colors"
+              >
                 Clear
               </button>
             )}
@@ -132,9 +179,9 @@ export default function Sync({
               syncLog.map((entry, i) => <LogRow key={i} entry={entry} />)
             )}
             {syncing && (
-              <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40">
-                <RiRefreshLine size={13} className="animate-spin text-blue-400 flex-shrink-0" />
-                <span className="text-[12px] text-blue-500 dark:text-blue-400 font-medium">Processing...</span>
+              <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-yellow-50 dark:bg-yellow-400/10">
+                <RiRefreshLine size={13} className="animate-spin text-yellow-500 dark:text-yellow-400 flex-shrink-0" />
+                <span className="text-[12px] text-yellow-600 dark:text-yellow-400 font-medium">Processing...</span>
               </div>
             )}
           </div>

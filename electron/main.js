@@ -59,6 +59,41 @@ function startLicenseCountdown(reason) {
   }, 1000);
 }
 
+
+// Open devtools automatically in dev mode
+
+
+function createWindow() {
+  Menu.setApplicationMenu(null);
+
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 700,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#EEEAE3',
+    icon: path.join(__dirname, 'icons/icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:5174');
+
+    // 👇 open devtools automatically
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    });
+
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
+  }
+}
+
 // ── Periodic re-validation ────────────────────────────────────────────────────
 function startPeriodicValidation() {
   if (validationInterval) clearInterval(validationInterval);

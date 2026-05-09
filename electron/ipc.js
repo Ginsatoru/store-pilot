@@ -61,6 +61,19 @@ function registerIpcHandlers() {
       const perPage = 100;
       let allProducts = [];
 
+      const isAlive = () => {
+        try { return !event.sender.isDestroyed(); }
+        catch (_) { return false; }
+      };
+
+      const emitProgress = (loaded, total) => {
+        if (!isAlive()) return;
+        try {
+          const percent = total > 0 ? Math.min(Math.round((loaded / total) * 100), 99) : 0;
+          event.sender.send('woo:fetchProgress', { loaded, total, percent });
+        } catch (_) {}
+      };
+
       // Page 1 — also read x-wp-total header for total count
       const searchParam = params.search ? `&search=${encodeURIComponent(params.search)}` : '';
       const firstRes = await wooRequest(settings, `/products?per_page=${perPage}&page=1&orderby=date&order=desc${searchParam}`);
@@ -69,11 +82,6 @@ function registerIpcHandlers() {
       const totalProducts = parseInt(firstRes.headers?.['x-wp-total'] ?? firstRes.headers?.['X-WP-Total'] ?? '0', 10);
       const firstBatch = firstRes.data || [];
       allProducts = allProducts.concat(firstBatch);
-
-      const emitProgress = (loaded, total) => {
-        const percent = total > 0 ? Math.min(Math.round((loaded / total) * 100), 99) : 0;
-        try { event.sender.send('woo:fetchProgress', { loaded, total, percent }); } catch (_) {}
-      };
 
       emitProgress(allProducts.length, totalProducts);
 
@@ -101,7 +109,11 @@ function registerIpcHandlers() {
       }
 
       // Final — 100%
-      try { event.sender.send('woo:fetchProgress', { loaded: allProducts.length, total: allProducts.length, percent: 100 }); } catch (_) {}
+      if (isAlive()) {
+        try {
+          event.sender.send('woo:fetchProgress', { loaded: allProducts.length, total: allProducts.length, percent: 100 });
+        } catch (_) {}
+      }
 
       return { ok: true, data: allProducts };
     } catch (e) { return { ok: false, error: e.message }; }

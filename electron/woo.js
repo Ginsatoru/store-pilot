@@ -48,7 +48,7 @@ function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs, 
           wooRequest(newSettings, newEndpoint, method, body, timeoutMs, _redirectCount + 1)
             .then(resolve).catch(reject);
         } catch (e) {
-          resolve({ ok: false, error: `Redirect error: ${e.message}`, status: res.statusCode });
+          resolve({ ok: false, error: `Redirect error: ${e.message}`, status: res.statusCode, headers: res.headers });
         }
         return;
       }
@@ -59,15 +59,16 @@ function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs, 
         try {
           const json = JSON.parse(data);
           if (res.statusCode >= 200 && res.statusCode < 300)
-            resolve({ ok: true, data: json, status: res.statusCode });
+            resolve({ ok: true, data: json, status: res.statusCode, headers: res.headers });
           else
-            resolve({ ok: false, error: json?.message || `HTTP ${res.statusCode}`, status: res.statusCode });
+            resolve({ ok: false, error: json?.message || `HTTP ${res.statusCode}`, status: res.statusCode, headers: res.headers });
         } catch {
           const preview = data.slice(0, 300).replace(/\s+/g, ' ').trim();
           resolve({
             ok: false,
             error: `Non-JSON response (HTTP ${res.statusCode}). Check your Store URL uses HTTPS. Preview: ${preview}`,
             status: res.statusCode,
+            headers: res.headers,
           });
         }
       });
@@ -77,23 +78,37 @@ function wooRequest(settings, endpoint, method = 'GET', body = null, timeoutMs, 
       req.destroy(new Error(`Request timed out after ${timeoutMs / 1000}s`));
     });
 
-    req.on('error', e => reject(new Error(e.message)));
+    req.on('error', e => reject(e));
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
 }
 
-// ── WooCommerce with retry on timeout ─────────────────────────────────────────
-async function wooRequestWithRetry(settings, endpoint, method = 'GET', body = null, retries = 1) {
+// ── Retryable error check ─────────────────────────────────────────────────────
+function isRetryable(e) {
+  if (!e || !e.message) return false;
+  const msg = e.message.toLowerCase();
+  return (
+    msg.includes('timed out') ||
+    msg.includes('socket hang up') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('epipe') ||
+    (e.code && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT'].includes(e.code))
+  );
+}
+
+// ── WooCommerce with retry on timeout or socket errors ────────────────────────
+async function wooRequestWithRetry(settings, endpoint, method = 'GET', body = null, retries = 2) {
   const timeoutMs = (method === 'GET') ? TIMEOUT_READ : TIMEOUT_WRITE;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await wooRequest(settings, endpoint, method, body, timeoutMs);
       return res;
     } catch (e) {
-      const isTimeout = e.message?.includes('timed out');
-      if (isTimeout && attempt < retries) {
-        await new Promise(r => setTimeout(r, 3000));
+      if (isRetryable(e) && attempt < retries) {
+        const delay = 3000 * (attempt + 1); // 3s, 6s
+        await new Promise(r => setTimeout(r, delay));
         continue;
       }
       throw e;
