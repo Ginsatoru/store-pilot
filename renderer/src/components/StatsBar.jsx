@@ -52,20 +52,6 @@ export default function StatsBar({ stats, loading }) {
           <StatBlock label="Low Stock" value={stats.lowStock} total={total} loading={loading} yellow />
         </div>
       </div>
-
-      <div className="flex items-center gap-1.5">
-        {['Directory', 'Org Chart', 'Insights'].map(btn => (
-          <button
-            key={btn}
-            className="flex items-center gap-1.5 text-[12px] font-medium text-[#555] dark:text-white/50 bg-white dark:bg-white/10 rounded-xl px-3 py-1.5 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-all duration-150"
-          >
-            {btn}
-            <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-              <path d="M2 3.5L4.5 6 7 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

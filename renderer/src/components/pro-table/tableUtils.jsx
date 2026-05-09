@@ -9,7 +9,8 @@ export const GRID_STYLE = {
 export const CELL       = 'px-3 py-2.5 flex items-center';
 export const CELL_INNER = 'px-3 py-2.5 flex items-center';
 
-export const FILTERS = ['Columns', 'Category', 'Status', 'Stock'];
+// Only Columns remains — Status/Stock/Category moved to filter panel
+export const FILTERS = ['Columns'];
 
 export const COL_HEADERS = [
   { key: 'name',          label: 'Name'         },
@@ -21,6 +22,19 @@ export const COL_HEADERS = [
   { key: 'stock_status',  label: 'Stock Status' },
   { key: 'status',        label: 'Status'       },
 ];
+
+// Columns that can be hidden (name is always visible)
+export const TOGGLEABLE_COLS = ['sku', 'category', 'regular_price', 'sale_price', 'stock', 'stock_status', 'status'];
+
+export const DEFAULT_VISIBLE_COLS = {
+  sku:           true,
+  category:      true,
+  regular_price: true,
+  sale_price:    true,
+  stock:         true,
+  stock_status:  true,
+  status:        true,
+};
 
 // Columns that support inline editing and their type
 export const EDITABLE_COLS = {
@@ -35,6 +49,14 @@ export const EDITABLE_COLS = {
 
 export const STOCK_STATUS_OPTIONS = ['instock', 'outofstock', 'onbackorder'];
 export const STATUS_OPTIONS       = ['Live', 'Draft'];
+
+// ── Dynamic grid style based on visible cols ──────────────────────────────────
+export function buildGridStyle(visibleCols) {
+  // name col is always shown (2fr), then each visible extra col gets 1fr
+  const extras = TOGGLEABLE_COLS.filter(k => visibleCols[k]);
+  const cols   = ['40px', '2fr', ...extras.map(() => '1fr')];
+  return { display: 'grid', gridTemplateColumns: cols.join(' ') };
+}
 
 // ── CSV export ────────────────────────────────────────────────────────────────
 export function esc(val) {

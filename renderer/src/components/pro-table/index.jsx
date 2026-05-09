@@ -3,7 +3,7 @@ import { RiRefreshLine } from 'react-icons/ri';
 import TableToolbar from './TableToolbar';
 import TableHeader  from './TableHeader';
 import TableBody    from './TableBody';
-import { exportToCSV, useAnimatedPercent, COL_HEADERS } from './tableUtils';
+import { exportToCSV, useAnimatedPercent, DEFAULT_VISIBLE_COLS } from './tableUtils';
 
 const EDITABLE_KEYS = ['name', 'category', 'regular_price', 'sale_price', 'stock', 'stock_status', 'status'];
 const MAX_HISTORY   = 50;
@@ -23,11 +23,12 @@ export default function ProductsTable({
   onBulkDelete, onQueueChange,
   loading, fetchProgress,
 }) {
-  const [selected,  setSelected]  = useState(new Set());
-  const [sortField, setSortField] = useState(null);
-  const [sortDir,   setSortDir]   = useState('asc');
-  const [dirtyMap,  setDirtyMap]  = useState({});
-  const [filters,   setFilters]   = useState(DEFAULT_FILTERS);
+  const [selected,     setSelected]     = useState(new Set());
+  const [sortField,    setSortField]    = useState(null);
+  const [sortDir,      setSortDir]      = useState('asc');
+  const [dirtyMap,     setDirtyMap]     = useState({});
+  const [filters,      setFilters]      = useState(DEFAULT_FILTERS);
+  const [visibleCols,  setVisibleCols]  = useState(DEFAULT_VISIBLE_COLS);
 
   // Undo/redo
   const [undoStack, setUndoStack] = useState([]);
@@ -104,9 +105,9 @@ export default function ProductsTable({
   // ── Filter ────────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     return sorted.filter(p => {
-      if (filters.status       && p.status       !== filters.status)       return false;
-      if (filters.stock_status && p.stock_status  !== filters.stock_status) return false;
-      if (filters.onSale       && !p.on_sale)                               return false;
+      if (filters.status       && p.status      !== filters.status)       return false;
+      if (filters.stock_status && p.stock_status !== filters.stock_status) return false;
+      if (filters.onSale       && !p.on_sale)                              return false;
       if (filters.category     && !(p.category || '').toLowerCase().includes(filters.category.toLowerCase())) return false;
       if (filters.priceMin !== '' && (p.regular_price ?? 0) < parseFloat(filters.priceMin)) return false;
       if (filters.priceMax !== '' && (p.regular_price ?? 0) > parseFloat(filters.priceMax)) return false;
@@ -128,18 +129,20 @@ export default function ProductsTable({
     setFilters(prev => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleFilterReset = useCallback(() => {
-    setFilters(DEFAULT_FILTERS);
+  const handleFilterReset = useCallback(() => setFilters(DEFAULT_FILTERS), []);
+
+  // ── Column visibility ─────────────────────────────────────────────────────
+  const handleColChange = useCallback((key, value) => {
+    setVisibleCols(prev => ({ ...prev, [key]: value }));
   }, []);
+
+  const handleColReset = useCallback(() => setVisibleCols(DEFAULT_VISIBLE_COLS), []);
 
   // ── Cell commit ───────────────────────────────────────────────────────────
   const handleCellCommit = useCallback((rowKey, field, value) => {
     setDirtyMap(prev => {
       pushHistory(prev);
-      return {
-        ...prev,
-        [rowKey]: { ...(prev[rowKey] || {}), [field]: value },
-      };
+      return { ...prev, [rowKey]: { ...(prev[rowKey] || {}), [field]: value } };
     });
   }, [pushHistory]);
 
@@ -181,7 +184,6 @@ export default function ProductsTable({
     for (const [rowKey, changes] of entries) {
       const product = products.find(p => (p.sku || p.id) === rowKey || p.sku === rowKey);
       if (!product) continue;
-
       const updated = {
         ...product,
         ...changes,
@@ -189,7 +191,6 @@ export default function ProductsTable({
         on_sale: (changes.sale_price ?? product.sale_price) > 0,
         price:   changes.regular_price ?? product.regular_price,
       };
-
       onQueueChange({ action: 'update', product: updated, imagePreview: null });
     }
 
@@ -204,13 +205,8 @@ export default function ProductsTable({
       const isMac = navigator.platform.toUpperCase().includes('MAC');
       const mod   = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
-
       if (e.key === 's' || e.key === 'S') { e.preventDefault(); handleSaveChanges(); return; }
-      if (e.key === 'z' || e.key === 'Z') {
-        e.preventDefault();
-        e.shiftKey ? redo() : undo();
-        return;
-      }
+      if (e.key === 'z' || e.key === 'Z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
       if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); redo(); }
     };
     window.addEventListener('keydown', handler);
@@ -229,19 +225,16 @@ export default function ProductsTable({
   const handleBulkDelete = () => {
     if (selected.size === 0) return;
     if (!window.confirm(`Delete ${selected.size} selected product(s) locally? This will not delete them from WooCommerce.`)) return;
-    const selectedProducts = filtered.filter(p => selected.has(p.sku || p.id));
-    onBulkDelete(selectedProducts);
+    onBulkDelete(filtered.filter(p => selected.has(p.sku || p.id)));
     setSelected(new Set());
   };
 
-  const total = allProducts?.length ?? products.length;
-
-  const realPercent = fetchProgress
+  const total        = allProducts?.length ?? products.length;
+  const realPercent  = fetchProgress
     ? (fetchProgress.percent ?? (fetchProgress.total > 0
         ? Math.min(Math.round((fetchProgress.loaded / fetchProgress.total) * 100), 99)
         : 0))
     : 0;
-
   const hasProgress     = loading && fetchProgress && fetchProgress.total > 0;
   const animatedPercent = useAnimatedPercent(realPercent, hasProgress);
 
@@ -252,10 +245,8 @@ export default function ProductsTable({
       <div className="relative flex-shrink-0">
         {hasProgress ? (
           <div className="h-[2px] w-full bg-gray-100 dark:bg-white/10 overflow-hidden">
-            <div
-              className="h-full bg-yellow-300 dark:bg-yellow-400 transition-all duration-100 ease-out"
-              style={{ width: `${animatedPercent}%` }}
-            />
+            <div className="h-full bg-yellow-300 dark:bg-yellow-400 transition-all duration-100 ease-out"
+              style={{ width: `${animatedPercent}%` }} />
           </div>
         ) : (
           <div className="h-[1px] w-full bg-[#f5f3f0] dark:bg-white/10" />
@@ -263,46 +254,33 @@ export default function ProductsTable({
       </div>
 
       <TableToolbar
-        search={search}
-        onSearch={onSearch}
-        onAddNew={onAddNew}
-        onImport={onImport}
-        onExport={handleExport}
-        onBulkDelete={handleBulkDelete}
+        search={search} onSearch={onSearch}
+        onAddNew={onAddNew} onImport={onImport}
+        onExport={handleExport} onBulkDelete={handleBulkDelete}
         onSaveChanges={handleSaveChanges}
-        onUndo={undo}
-        onRedo={redo}
-        canUndo={undoStack.length > 0}
-        canRedo={redoStack.length > 0}
-        loading={loading}
-        sorted={filtered}
-        selected={selected}
-        dirtyCount={dirtyCount}
-        filters={filters}
-        onFilterChange={handleFilterChange}
-        onFilterReset={handleFilterReset}
-        activeFilterCount={activeFilterCount}
+        onUndo={undo} onRedo={redo}
+        canUndo={undoStack.length > 0} canRedo={redoStack.length > 0}
+        loading={loading} sorted={filtered}
+        selected={selected} dirtyCount={dirtyCount}
+        filters={filters} onFilterChange={handleFilterChange}
+        onFilterReset={handleFilterReset} activeFilterCount={activeFilterCount}
+        visibleCols={visibleCols} onColChange={handleColChange} onColReset={handleColReset}
       />
 
       <TableHeader
-        products={filtered}
-        selected={selected}
-        sortField={sortField}
-        sortDir={sortDir}
-        onToggleAll={toggleAll}
-        onSort={handleSort}
+        products={filtered} selected={selected}
+        sortField={sortField} sortDir={sortDir}
+        onToggleAll={toggleAll} onSort={handleSort}
+        visibleCols={visibleCols}
       />
 
       <div className="flex-1 overflow-hidden">
         <TableBody
-          loading={loading}
-          sorted={filtered}
-          selected={selected}
-          onRowClick={onRowClick}
-          onToggleOne={toggleOne}
-          dirtyMap={dirtyMap}
-          onCellCommit={handleCellCommit}
-          onNavigate={handleNavigate}
+          loading={loading} sorted={filtered}
+          selected={selected} onRowClick={onRowClick}
+          onToggleOne={toggleOne} dirtyMap={dirtyMap}
+          onCellCommit={handleCellCommit} onNavigate={handleNavigate}
+          visibleCols={visibleCols}
         />
       </div>
 
@@ -326,11 +304,8 @@ export default function ProductsTable({
           )}
         </span>
         {onRefresh && (
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="flex items-center gap-1 text-[11px] text-[#aaa] dark:text-white/30 hover:text-[#555] dark:hover:text-white/60 transition-colors disabled:opacity-40"
-          >
+          <button onClick={onRefresh} disabled={loading}
+            className="flex items-center gap-1 text-[11px] text-[#aaa] dark:text-white/30 hover:text-[#555] dark:hover:text-white/60 transition-colors disabled:opacity-40">
             <RiRefreshLine size={11} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>

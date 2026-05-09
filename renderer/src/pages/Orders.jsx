@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   RiSearchLine, RiFilter3Line,
-  RiArrowUpLine, RiArrowDownLine,
   RiShoppingBag3Line, RiTimeLine, RiCheckLine,
-  RiMoneyDollarCircleLine,
+  RiMoneyDollarCircleLine, RiCloseLine,
 } from 'react-icons/ri';
 
 const GRID_STYLE = {
@@ -25,17 +24,23 @@ const COL_HEADERS = [
 ];
 
 const STATUS_MAP = {
-  pending:    { label: 'Pending',    color: 'text-yellow-600 dark:text-yellow-400',  dot: 'bg-yellow-400'  },
-  processing: { label: 'Processing', color: 'text-blue-600 dark:text-blue-400',      dot: 'bg-blue-400'    },
-  'on-hold':  { label: 'On Hold',    color: 'text-orange-500 dark:text-orange-400',  dot: 'bg-orange-400'  },
-  completed:  { label: 'Completed',  color: 'text-emerald-600 dark:text-emerald-400',dot: 'bg-emerald-400' },
-  cancelled:  { label: 'Cancelled',  color: 'text-red-500 dark:text-red-400',        dot: 'bg-red-400'     },
-  refunded:   { label: 'Refunded',   color: 'text-purple-500 dark:text-purple-400',  dot: 'bg-purple-400'  },
-  failed:     { label: 'Failed',     color: 'text-red-400',                          dot: 'bg-red-300'     },
-  shipped:    { label: 'Shipped',    color: 'text-teal-600 dark:text-teal-400',      dot: 'bg-teal-400'    },
+  pending:    { label: 'Pending',    color: 'text-yellow-600 dark:text-yellow-400',   dot: 'bg-yellow-400'  },
+  processing: { label: 'Processing', color: 'text-blue-600 dark:text-blue-400',       dot: 'bg-blue-400'    },
+  'on-hold':  { label: 'On Hold',    color: 'text-orange-500 dark:text-orange-400',   dot: 'bg-orange-400'  },
+  completed:  { label: 'Completed',  color: 'text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-400' },
+  cancelled:  { label: 'Cancelled',  color: 'text-red-500 dark:text-red-400',         dot: 'bg-red-400'     },
+  refunded:   { label: 'Refunded',   color: 'text-purple-500 dark:text-purple-400',   dot: 'bg-purple-400'  },
+  failed:     { label: 'Failed',     color: 'text-red-400',                           dot: 'bg-red-300'     },
+  shipped:    { label: 'Shipped',    color: 'text-teal-600 dark:text-teal-400',       dot: 'bg-teal-400'    },
 };
 
-const FILTERS = ['Status', 'Payment', 'Date Range', 'Customer'];
+const DEFAULT_FILTERS = {
+  status:      '',
+  payment:     '',
+  dateFrom:    '',
+  dateTo:      '',
+  customer:    '',
+};
 
 function normalizeOrder(o) {
   return {
@@ -63,6 +68,121 @@ function StatusBadge({ status }) {
     </span>
   );
 }
+
+// ── Filter Panel ──────────────────────────────────────────────────────────────
+
+function FilterPanel({ filters, onChange, onReset, onClose, paymentMethods }) {
+  const statuses = Object.keys(STATUS_MAP);
+
+  return (
+    <div className="absolute left-0 top-full mt-1.5 z-50 w-64 bg-white dark:bg-[#1c1c1b] border border-[#f0ede8] dark:border-white/10 rounded-2xl shadow-xl p-3 flex flex-col gap-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-semibold text-[#1a1a1a] dark:text-white/80">Filters</span>
+        <div className="flex items-center gap-1.5">
+          <button onClick={onReset} className="text-[11px] text-[#aaa] dark:text-white/30 hover:text-[#555] dark:hover:text-white/60 transition-colors">Reset</button>
+          <button onClick={onClose} className="w-5 h-5 flex items-center justify-center rounded-lg text-[#ccc] dark:text-white/20 hover:text-[#555] dark:hover:text-white/60 transition-colors">
+            <RiCloseLine size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* Status */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[11px] font-medium text-[#888] dark:text-white/30 uppercase tracking-wide">Status</label>
+        <div className="flex gap-1.5 flex-wrap">
+          <button
+            onClick={() => onChange('status', '')}
+            className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition-colors duration-150 ${
+              filters.status === ''
+                ? 'bg-[#1a1a1a] dark:bg-white text-white dark:text-[#1a1a1a]'
+                : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 hover:bg-gray-200 dark:hover:bg-white/15'
+            }`}
+          >
+            All
+          </button>
+          {statuses.map(s => (
+            <button
+              key={s}
+              onClick={() => onChange('status', s)}
+              className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition-colors duration-150 ${
+                filters.status === s
+                  ? 'bg-[#1a1a1a] dark:bg-white text-white dark:text-[#1a1a1a]'
+                  : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 hover:bg-gray-200 dark:hover:bg-white/15'
+              }`}
+            >
+              {STATUS_MAP[s].label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Payment */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[11px] font-medium text-[#888] dark:text-white/30 uppercase tracking-wide">Payment</label>
+        <div className="flex gap-1.5 flex-wrap">
+          <button
+            onClick={() => onChange('payment', '')}
+            className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition-colors duration-150 ${
+              filters.payment === ''
+                ? 'bg-[#1a1a1a] dark:bg-white text-white dark:text-[#1a1a1a]'
+                : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 hover:bg-gray-200 dark:hover:bg-white/15'
+            }`}
+          >
+            All
+          </button>
+          {paymentMethods.map(p => (
+            <button
+              key={p}
+              onClick={() => onChange('payment', p)}
+              className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition-colors duration-150 ${
+                filters.payment === p
+                  ? 'bg-[#1a1a1a] dark:bg-white text-white dark:text-[#1a1a1a]'
+                  : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/40 hover:bg-gray-200 dark:hover:bg-white/15'
+              }`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Date Range */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[11px] font-medium text-[#888] dark:text-white/30 uppercase tracking-wide">Date Range</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={filters.dateFrom}
+            onChange={e => onChange('dateFrom', e.target.value)}
+            className="w-full px-2.5 py-1.5 rounded-xl text-[11px] bg-gray-100 dark:bg-white/10 text-[#1a1a1a] dark:text-white/80 outline-none border border-transparent focus:border-yellow-300 dark:focus:border-yellow-400/50"
+          />
+          <span className="text-[11px] text-[#ccc] dark:text-white/20 flex-shrink-0">–</span>
+          <input
+            type="date"
+            value={filters.dateTo}
+            onChange={e => onChange('dateTo', e.target.value)}
+            className="w-full px-2.5 py-1.5 rounded-xl text-[11px] bg-gray-100 dark:bg-white/10 text-[#1a1a1a] dark:text-white/80 outline-none border border-transparent focus:border-yellow-300 dark:focus:border-yellow-400/50"
+          />
+        </div>
+      </div>
+
+      {/* Customer */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[11px] font-medium text-[#888] dark:text-white/30 uppercase tracking-wide">Customer</label>
+        <input
+          type="text"
+          placeholder="Name or email…"
+          value={filters.customer}
+          onChange={e => onChange('customer', e.target.value)}
+          className="w-full px-2.5 py-1.5 rounded-xl text-[12px] bg-gray-100 dark:bg-white/10 text-[#1a1a1a] dark:text-white/80 placeholder-gray-400 dark:placeholder-white/20 outline-none border border-transparent focus:border-yellow-300 dark:focus:border-yellow-400/50"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Order Detail Panel ────────────────────────────────────────────────────────
 
 function OrderDetailPanel({ order, onClose }) {
   if (!order) return null;
@@ -141,6 +261,8 @@ function OrderDetailPanel({ order, onClose }) {
   );
 }
 
+// ── Stat Card ─────────────────────────────────────────────────────────────────
+
 function StatCard({ label, value, icon: Icon, accent = 'text-[#1a1a1a] dark:text-white/80' }) {
   return (
     <div className="flex-1 bg-white dark:bg-white/5 rounded-xl px-4 py-3 flex items-center gap-3">
@@ -155,34 +277,90 @@ function StatCard({ label, value, icon: Icon, accent = 'text-[#1a1a1a] dark:text
   );
 }
 
+// ── Main ──────────────────────────────────────────────────────────────────────
+
 export default function Orders({ orderList, syncing }) {
-  const [search, setSearch]           = useState('');
-  const [sortField, setSortField]     = useState('date_created');
-  const [sortDir, setSortDir]         = useState('desc');
-  const [selected, setSelected]       = useState(new Set());
+  const [search,      setSearch]      = useState('');
+  const [sortField,   setSortField]   = useState('date_created');
+  const [sortDir,     setSortDir]     = useState('desc');
+  const [selected,    setSelected]    = useState(new Set());
   const [activeOrder, setActiveOrder] = useState(null);
+  const [filters,     setFilters]     = useState(DEFAULT_FILTERS);
+  const [filterOpen,  setFilterOpen]  = useState(false);
+  const filterRef = useRef(null);
 
-  const normalized = (orderList || []).map(normalizeOrder);
+  // Close filter panel on outside click
+  useEffect(() => {
+    if (!filterOpen) return;
+    const handler = (e) => {
+      if (filterRef.current && !filterRef.current.contains(e.target)) setFilterOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [filterOpen]);
 
-  const filtered = normalized.filter(o => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      String(o.number).includes(q) ||
-      o.billing_name.toLowerCase().includes(q) ||
-      o.billing_email.toLowerCase().includes(q) ||
-      o.status.toLowerCase().includes(q)
-    );
-  });
+  const normalized = useMemo(() => (orderList || []).map(normalizeOrder), [orderList]);
 
-  const sorted = [...filtered].sort((a, b) => {
-    let va = a[sortField], vb = b[sortField];
-    if (sortField === 'date_created') { va = new Date(va); vb = new Date(vb); }
-    if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
-    if (va < vb) return sortDir === 'asc' ? -1 : 1;
-    if (va > vb) return sortDir === 'asc' ? 1 : -1;
-    return 0;
-  });
+  // Derive unique payment methods from data
+  const paymentMethods = useMemo(() => {
+    const set = new Set(normalized.map(o => o.payment).filter(p => p && p !== '—'));
+    return Array.from(set);
+  }, [normalized]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filters.status)   count++;
+    if (filters.payment)  count++;
+    if (filters.customer) count++;
+    if (filters.dateFrom || filters.dateTo) count++;
+    return count;
+  }, [filters]);
+
+  const handleFilterChange = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
+  const handleFilterReset  = () => setFilters(DEFAULT_FILTERS);
+
+  const filtered = useMemo(() => {
+    return normalized.filter(o => {
+      // Search
+      if (search) {
+        const q = search.toLowerCase();
+        const match =
+          String(o.number).includes(q) ||
+          o.billing_name.toLowerCase().includes(q) ||
+          o.billing_email.toLowerCase().includes(q) ||
+          o.status.toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      // Status
+      if (filters.status && o.status !== filters.status) return false;
+      // Payment
+      if (filters.payment && o.payment !== filters.payment) return false;
+      // Customer
+      if (filters.customer) {
+        const q = filters.customer.toLowerCase();
+        if (!o.billing_name.toLowerCase().includes(q) && !o.billing_email.toLowerCase().includes(q)) return false;
+      }
+      // Date range
+      if (filters.dateFrom) {
+        if (new Date(o.date_created) < new Date(filters.dateFrom)) return false;
+      }
+      if (filters.dateTo) {
+        if (new Date(o.date_created) > new Date(filters.dateTo + 'T23:59:59')) return false;
+      }
+      return true;
+    });
+  }, [normalized, search, filters]);
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      let va = a[sortField], vb = b[sortField];
+      if (sortField === 'date_created') { va = new Date(va); vb = new Date(vb); }
+      if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filtered, sortField, sortDir]);
 
   const allSelected = sorted.length > 0 && selected.size === sorted.length;
   const toggleAll   = () => setSelected(allSelected ? new Set() : new Set(sorted.map(o => o.id)));
@@ -205,11 +383,11 @@ export default function Orders({ orderList, syncing }) {
       </div>
 
       <div className="flex gap-3 flex-shrink-0">
-        <StatCard label="Total Revenue"  value={`$${totalRevenue.toFixed(2)}`} icon={RiMoneyDollarCircleLine} />
-        <StatCard label="Total Orders"   value={normalized.length}              icon={RiShoppingBag3Line}      />
-        <StatCard label="Processing"     value={byStatus['processing'] || 0}    icon={RiShoppingBag3Line}      accent="text-blue-600 dark:text-blue-400"    />
-        <StatCard label="Completed"      value={byStatus['completed']  || 0}    icon={RiCheckLine}             accent="text-emerald-600 dark:text-emerald-400" />
-        <StatCard label="Pending"        value={byStatus['pending']    || 0}    icon={RiTimeLine}              accent="text-yellow-600 dark:text-yellow-400"  />
+        <StatCard label="Total Revenue" value={`$${totalRevenue.toFixed(2)}`} icon={RiMoneyDollarCircleLine} />
+        <StatCard label="Total Orders"  value={normalized.length}              icon={RiShoppingBag3Line} />
+        <StatCard label="Processing"    value={byStatus['processing'] || 0}    icon={RiShoppingBag3Line} accent="text-blue-600 dark:text-blue-400" />
+        <StatCard label="Completed"     value={byStatus['completed']  || 0}    icon={RiCheckLine}        accent="text-emerald-600 dark:text-emerald-400" />
+        <StatCard label="Pending"       value={byStatus['pending']    || 0}    icon={RiTimeLine}         accent="text-yellow-600 dark:text-yellow-400" />
       </div>
 
       <div className="flex-1 overflow-hidden flex gap-3">
@@ -217,16 +395,39 @@ export default function Orders({ orderList, syncing }) {
 
           {/* Toolbar */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-[#f5f3f0] dark:border-white/10 flex-shrink-0">
-            <div className="flex items-center gap-1 flex-wrap">
-              {FILTERS.map(f => (
-                <button key={f} className="flex items-center gap-0.5 px-2.5 py-1 rounded-xl text-[12px] font-medium text-gray-500 dark:text-white/40 bg-gray-100 dark:bg-white/10 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors">
-                  {f}
-                  <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-                    <path d="M2 3.5L4.5 6 7 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+            <div className="flex items-center gap-1.5 flex-wrap">
+
+              {/* Filter button */}
+              <div className="relative" ref={filterRef}>
+                <button
+                  onClick={() => setFilterOpen(o => !o)}
+                  className={`relative flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[12px] font-medium transition-colors duration-150 ${
+                    filterOpen || activeFilterCount > 0
+                      ? 'bg-[#1a1a1a] dark:bg-white text-white dark:text-[#1a1a1a]'
+                      : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-white/50 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a]'
+                  }`}
+                >
+                  <RiFilter3Line size={12} />
+                  Filter
+                  {activeFilterCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-yellow-400 text-[#1a1a1a] text-[8px] font-bold flex items-center justify-center leading-none">
+                      {activeFilterCount}
+                    </span>
+                  )}
                 </button>
-              ))}
-              <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-white/10 rounded-xl px-2.5 py-1.5 ml-1">
+                {filterOpen && (
+                  <FilterPanel
+                    filters={filters}
+                    onChange={handleFilterChange}
+                    onReset={handleFilterReset}
+                    onClose={() => setFilterOpen(false)}
+                    paymentMethods={paymentMethods}
+                  />
+                )}
+              </div>
+
+              {/* Search */}
+              <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-white/10 rounded-xl px-2.5 py-1.5">
                 <RiSearchLine className="text-gray-400 dark:text-white/30 flex-shrink-0" size={13} />
                 <input
                   type="text"
@@ -237,9 +438,6 @@ export default function Orders({ orderList, syncing }) {
                 />
               </div>
             </div>
-            <button className="w-7 h-7 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-white/40 hover:bg-[#1a1a1a] dark:hover:bg-white hover:text-white dark:hover:text-[#1a1a1a] transition-colors">
-              <RiFilter3Line size={13} />
-            </button>
           </div>
 
           {/* Column headers */}
@@ -251,14 +449,9 @@ export default function Orders({ orderList, syncing }) {
               </div>
               {COL_HEADERS.map(col => (
                 <button key={col.key} onClick={() => handleSort(col.key)}
-                  className="relative flex items-center py-2.5 text-[11px] font-medium text-[#888] dark:text-white/30 hover:text-[#333] dark:hover:text-white/60 transition-colors text-left group w-full px-3"
+                  className="flex items-center py-2.5 text-[11px] font-medium text-[#888] dark:text-white/30 hover:text-[#333] dark:hover:text-white/60 transition-colors text-left w-full pl-2.5 pr-3"
                 >
-                  <span className="absolute left-3 text-[#ccc] dark:text-white/15 group-hover:text-[#aaa] dark:group-hover:text-white/30 transition-colors">
-                    {sortField === col.key
-                      ? (sortDir === 'asc' ? <RiArrowUpLine size={10} /> : <RiArrowDownLine size={10} />)
-                      : <RiArrowUpLine size={10} />}
-                  </span>
-                  <span className="pl-3.5">{col.label}</span>
+                  {col.label}
                 </button>
               ))}
             </div>
@@ -268,11 +461,11 @@ export default function Orders({ orderList, syncing }) {
           <div className="flex-1 overflow-auto">
             {sorted.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-3">
-                <span className="text-5xl">🛍️</span>
+                <RiShoppingBag3Line size={40} className="text-[#ccc] dark:text-white/15" />
                 <div className="text-center">
-                  <p className="text-[13px] font-medium text-[#555] dark:text-white/40">No orders yet</p>
+                  <p className="text-[13px] font-medium text-[#555] dark:text-white/40">No orders found</p>
                   <p className="text-[11px] text-[#aaa] dark:text-white/25 mt-0.5">
-                    {search ? 'Try adjusting your search' : 'Run a sync from the Sync page to fetch your orders'}
+                    {search || activeFilterCount > 0 ? 'Try adjusting your search or filters' : 'Run a sync from the Sync page to fetch your orders'}
                   </p>
                 </div>
               </div>
@@ -289,7 +482,7 @@ export default function Orders({ orderList, syncing }) {
                       isActive ? 'bg-yellow-50 dark:bg-yellow-400/10' : isSelected ? 'bg-blue-50/40 dark:bg-blue-400/5' : 'hover:bg-gray-50 dark:hover:bg-white/5'
                     }`}
                   >
-                    <div className={CELL} onClick={e => { e.stopPropagation(); toggleOne(order.id); }}>
+                    <div className={CELL} onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(order.id)}
                         className="w-3.5 h-3.5 rounded border-[#ccc] dark:border-white/20 cursor-pointer accent-[#1a1a1a] dark:accent-white" />
                     </div>
@@ -323,7 +516,9 @@ export default function Orders({ orderList, syncing }) {
 
           {/* Footer */}
           <div className="flex items-center justify-between px-4 py-2 border-t border-[#f5f3f0] dark:border-white/10 bg-white dark:bg-[#1c1c1b] flex-shrink-0">
-            <span className="text-[11px] text-[#aaa] dark:text-white/30">{sorted.length} of {normalized.length} orders</span>
+            <span className="text-[11px] text-[#aaa] dark:text-white/30">
+              {activeFilterCount > 0 ? `${sorted.length} of ${normalized.length} orders (filtered)` : `${sorted.length} of ${normalized.length} orders`}
+            </span>
             {syncing && (
               <span className="text-[11px] text-blue-400 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
