@@ -5,23 +5,17 @@ import ProductForm from "../components/ProductForm.jsx";
 import ImportModal from "../components/import/ImportModal.jsx";
 
 function computeStats(products) {
-  const total = products.length;
+  const total     = products.length;
   const published = products.filter((p) => p.status === "Live").length;
-  const draft = products.filter((p) => p.status === "Draft").length;
-  const inStock = products.filter((p) => p.stock > 5).length;
-  const lowStock = products.filter((p) => p.stock > 0 && p.stock <= 5).length;
+  const draft     = products.filter((p) => p.status === "Draft").length;
+  const inStock   = products.filter((p) => p.stock > 5).length;
+  const lowStock  = products.filter((p) => p.stock > 0 && p.stock <= 5).length;
   return { total, published, draft, inStock, lowStock };
 }
 
 const COLORS = [
-  "#6366f1",
-  "#f59e0b",
-  "#10b981",
-  "#3b82f6",
-  "#ec4899",
-  "#8b5cf6",
-  "#f97316",
-  "#14b8a6",
+  "#6366f1", "#f59e0b", "#10b981", "#3b82f6",
+  "#ec4899", "#8b5cf6", "#f97316", "#14b8a6",
 ];
 
 function buildLocalProduct(formData, existingProduct) {
@@ -37,97 +31,49 @@ function buildLocalProduct(formData, existingProduct) {
         null;
 
   return {
-    id: formData.id,
+    id:                formData.id,
     sku,
-    name: formData.name,
-    slug: formData.slug || existingProduct?.slug || "",
-    type: formData.type || existingProduct?.type || "simple",
-    category: formData.category || "Uncategorized",
-    categories: formData.categories?.length
-      ? formData.categories
-      : existingProduct?.categories || [],
-    tags: formData.tags?.length ? formData.tags : existingProduct?.tags || [],
-    price: parseFloat(formData.price) || 0,
-    regular_price: parseFloat(formData.regular_price || formData.price) || 0,
-    sale_price: parseFloat(formData.sale_price) || 0,
-    on_sale: parseFloat(formData.sale_price) > 0,
-    stock: formData.stock !== "" ? parseInt(formData.stock) : 0,
-    stock_status: formData.stock_status || "instock",
-    manage_stock: formData.manage_stock ?? true,
-    weight: formData.weight || "",
-    dimensions: formData.dimensions || { length: "", width: "", height: "" },
+    name:              formData.name,
+    slug:              formData.slug || existingProduct?.slug || "",
+    type:              formData.type || existingProduct?.type || "simple",
+    category:          formData.category || "Uncategorized",
+    categories:        formData.categories?.length ? formData.categories : existingProduct?.categories || [],
+    tags:              formData.tags?.length ? formData.tags : existingProduct?.tags || [],
+    price:             parseFloat(formData.price) || 0,
+    regular_price:     parseFloat(formData.regular_price || formData.price) || 0,
+    sale_price:        parseFloat(formData.sale_price) || 0,
+    on_sale:           parseFloat(formData.sale_price) > 0,
+    stock:             formData.stock !== "" ? parseInt(formData.stock) : 0,
+    stock_status:      formData.stock_status || "instock",
+    manage_stock:      formData.manage_stock ?? true,
+    weight:            formData.weight || "",
+    dimensions:        formData.dimensions || { length: "", width: "", height: "" },
     short_description: formData.short_description || "",
-    description: formData.description || "",
-    images: formData.images?.length
-      ? formData.images
-      : existingProduct?.images || [],
-    date: formData.date || existingProduct?.date || new Date().toISOString(),
-    date_modified: formData.date_modified || "",
-    status: formData.status || "Draft",
-    color:
-      formData.color ||
-      existingProduct?.color ||
-      COLORS[Math.floor(Math.random() * COLORS.length)],
+    description:       formData.description || "",
+    images:            formData.images?.length ? formData.images : existingProduct?.images || [],
+    date:              formData.date || existingProduct?.date || new Date().toISOString(),
+    date_modified:     formData.date_modified || "",
+    status:            formData.status || "Draft",
+    color:             formData.color || existingProduct?.color || COLORS[Math.floor(Math.random() * COLORS.length)],
     localPreview,
     _pending: true,
-    _raw: formData._raw || existingProduct?._raw || {},
+    _raw:     formData._raw || existingProduct?._raw || {},
   };
 }
 
 function hasChanges(existing, row, fields) {
   const checks = {
-    name: () => {
-      const v = String(row.name || "").trim();
-      return v !== "" && v !== String(existing.name || "").trim();
-    },
-    category: () => {
-      const v = String(row.category || "").trim();
-      return (
-        v !== "" &&
-        v !== "Uncategorized" &&
-        v !== String(existing.category || "").trim()
-      );
-    },
-    regular_price: () => {
-      const v = String(row.regular_price || "").trim();
-      return (
-        v !== "" &&
-        (parseFloat(v) || 0) !== (parseFloat(existing.regular_price) || 0)
-      );
-    },
-    sale_price: () => {
-      const v = String(row.sale_price || "").trim();
-      return (
-        v !== "" &&
-        (parseFloat(v) || 0) !== (parseFloat(existing.sale_price) || 0)
-      );
-    },
-    stock: () => {
-      const v = String(row.stock || "").trim();
-      return v !== "" && parseInt(v) !== (existing.stock ?? 0);
-    },
-    stock_status: () => {
-      const v = String(row.stock_status || "").trim();
-      return v !== "" && v !== String(existing.stock_status || "").trim();
-    },
-    status: () => {
-      const v = String(row.status || "").trim();
-      return v !== "" && v !== String(existing.status || "").trim();
-    },
-    weight: () => {
-      const v = String(row.weight || "").trim();
-      return v !== "" && v !== String(existing.weight || "").trim();
-    },
-    short_description: () => {
-      const v = String(row.short_description || "").trim();
-      return v !== "" && v !== String(existing.short_description || "").trim();
-    },
-    description: () => {
-      const v = String(row.description || "").trim();
-      return v !== "" && v !== String(existing.description || "").trim();
-    },
+    name:              () => { const v = String(row.name || "").trim(); return v !== "" && v !== String(existing.name || "").trim(); },
+    category:          () => { const v = String(row.category || "").trim(); return v !== "" && v !== "Uncategorized" && v !== String(existing.category || "").trim(); },
+    regular_price:     () => { const v = String(row.regular_price || "").trim(); return v !== "" && (parseFloat(v) || 0) !== (parseFloat(existing.regular_price) || 0); },
+    sale_price:        () => { const v = String(row.sale_price || "").trim(); return v !== "" && (parseFloat(v) || 0) !== (parseFloat(existing.sale_price) || 0); },
+    stock:             () => { const v = String(row.stock || "").trim(); return v !== "" && parseInt(v) !== (existing.stock ?? 0); },
+    stock_status:      () => { const v = String(row.stock_status || "").trim(); return v !== "" && v !== String(existing.stock_status || "").trim(); },
+    status:            () => { const v = String(row.status || "").trim(); return v !== "" && v !== String(existing.status || "").trim(); },
+    weight:            () => { const v = String(row.weight || "").trim(); return v !== "" && v !== String(existing.weight || "").trim(); },
+    short_description: () => { const v = String(row.short_description || "").trim(); return v !== "" && v !== String(existing.short_description || "").trim(); },
+    description:       () => { const v = String(row.description || "").trim(); return v !== "" && v !== String(existing.description || "").trim(); },
   };
-
   return fields.some((f) => checks[f]?.());
 }
 
@@ -141,11 +87,13 @@ export default function Products({
   onRefresh,
   onQueueChange,
   onBatchImport,
+  onQueueVariations,
   pendingQueue,
+  conn,
 }) {
-  const [search, setSearch] = useState("");
-  const [showForm, setShowForm] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+  const [search,      setSearch]      = useState("");
+  const [showForm,    setShowForm]    = useState(false);
+  const [showImport,  setShowImport]  = useState(false);
   const [editProduct, setEditProduct] = useState(null);
 
   const filtered = useMemo(() => {
@@ -185,16 +133,16 @@ export default function Products({
 
     if (formData._isNew) {
       onQueueChange({
-        action: "create",
-        product: local,
-        imageFile: formData.imageFile || null,
+        action:       "create",
+        product:      local,
+        imageFile:    formData.imageFile || null,
         imagePreview: imagePreviewForSync,
       });
     } else {
       onQueueChange({
-        action: "update",
-        product: local,
-        imageFile: formData.imageFile || null,
+        action:       "update",
+        product:      local,
+        imageFile:    formData.imageFile || null,
         imagePreview: imagePreviewForSync,
       });
     }
@@ -212,8 +160,6 @@ export default function Products({
     });
   };
 
-  // Build all import items in memory, then call onBatchImport ONCE.
-  // No chunking — no mid-import re-renders.
   const handleImport = async (rows, fields, onProgress) => {
     let created = 0;
     let updated = 0;
@@ -227,86 +173,51 @@ export default function Products({
         if (!hasChanges(existingProduct, row, fields)) continue;
 
         const merged = { ...existingProduct };
-        if (fields.includes("name")) merged.name = row.name;
-        if (fields.includes("category")) merged.category = row.category;
-        if (fields.includes("regular_price"))
-          merged.regular_price =
-            parseFloat(row.regular_price) || existingProduct.regular_price;
-        if (fields.includes("sale_price"))
-          merged.sale_price =
-            parseFloat(row.sale_price) || existingProduct.sale_price;
-        if (fields.includes("stock"))
-          merged.stock =
-            row.stock !== "" ? parseInt(row.stock) : existingProduct.stock;
-        if (fields.includes("stock_status"))
-          merged.stock_status =
-            row.stock_status || existingProduct.stock_status;
-        if (fields.includes("status"))
-          merged.status = row.status || existingProduct.status;
-        if (fields.includes("weight"))
-          merged.weight = row.weight || existingProduct.weight;
-        if (fields.includes("short_description"))
-          merged.short_description =
-            row.short_description || existingProduct.short_description;
-        if (fields.includes("description"))
-          merged.description = row.description || existingProduct.description;
+        if (fields.includes("name"))              merged.name              = row.name;
+        if (fields.includes("category"))          merged.category          = row.category;
+        if (fields.includes("regular_price"))     merged.regular_price     = parseFloat(row.regular_price) || existingProduct.regular_price;
+        if (fields.includes("sale_price"))        merged.sale_price        = parseFloat(row.sale_price) || existingProduct.sale_price;
+        if (fields.includes("stock"))             merged.stock             = row.stock !== "" ? parseInt(row.stock) : existingProduct.stock;
+        if (fields.includes("stock_status"))      merged.stock_status      = row.stock_status || existingProduct.stock_status;
+        if (fields.includes("status"))            merged.status            = row.status || existingProduct.status;
+        if (fields.includes("weight"))            merged.weight            = row.weight || existingProduct.weight;
+        if (fields.includes("short_description")) merged.short_description = row.short_description || existingProduct.short_description;
+        if (fields.includes("description"))       merged.description       = row.description || existingProduct.description;
         merged._pending = true;
 
-        importItems.push({
-          action: "update",
-          product: merged,
-          imagePreview: merged.localPreview || null,
-        });
+        importItems.push({ action: "update", product: merged, imagePreview: merged.localPreview || null });
         updated++;
       } else {
-        const ts = Date.now();
+        const ts  = Date.now();
         const rnd = Math.random().toString(36).slice(2, 7);
         const sku = row.sku || `import_${ts}_${rnd}`;
         const local = {
-          id: `import_${ts}_${rnd}`,
+          id:                `import_${ts}_${rnd}`,
           sku,
-          name: fields.includes("name") ? row.name : "Untitled",
-          category: fields.includes("category")
-            ? row.category
-            : "Uncategorized",
-          categories: [],
-          tags: [],
-          regular_price: fields.includes("regular_price")
-            ? parseFloat(row.regular_price) || 0
-            : 0,
-          sale_price: fields.includes("sale_price")
-            ? parseFloat(row.sale_price) || 0
-            : 0,
-          price: fields.includes("regular_price")
-            ? parseFloat(row.regular_price) || 0
-            : 0,
-          stock: fields.includes("stock") ? parseInt(row.stock) || 0 : 0,
-          stock_status: fields.includes("stock_status")
-            ? row.stock_status || "instock"
-            : "instock",
-          status: fields.includes("status") ? row.status || "Draft" : "Draft",
-          weight: fields.includes("weight") ? row.weight || "" : "",
-          short_description: fields.includes("short_description")
-            ? row.short_description || ""
-            : "",
-          description: fields.includes("description")
-            ? row.description || ""
-            : "",
-          manage_stock: true,
-          dimensions: { length: "", width: "", height: "" },
-          images: [],
-          date: new Date().toISOString(),
+          name:              fields.includes("name")              ? row.name              : "Untitled",
+          category:          fields.includes("category")          ? row.category          : "Uncategorized",
+          categories:        [],
+          tags:              [],
+          regular_price:     fields.includes("regular_price")     ? parseFloat(row.regular_price) || 0 : 0,
+          sale_price:        fields.includes("sale_price")        ? parseFloat(row.sale_price) || 0    : 0,
+          price:             fields.includes("regular_price")     ? parseFloat(row.regular_price) || 0 : 0,
+          stock:             fields.includes("stock")             ? parseInt(row.stock) || 0           : 0,
+          stock_status:      fields.includes("stock_status")      ? row.stock_status || "instock"      : "instock",
+          status:            fields.includes("status")            ? row.status || "Draft"              : "Draft",
+          weight:            fields.includes("weight")            ? row.weight || ""                   : "",
+          short_description: fields.includes("short_description") ? row.short_description || ""        : "",
+          description:       fields.includes("description")       ? row.description || ""              : "",
+          manage_stock:  true,
+          dimensions:    { length: "", width: "", height: "" },
+          images:        [],
+          date:          new Date().toISOString(),
           date_modified: "",
-          color: COLORS[Math.floor(Math.random() * COLORS.length)],
-          localPreview: null,
-          _pending: true,
-          _raw: {},
+          color:         COLORS[Math.floor(Math.random() * COLORS.length)],
+          localPreview:  null,
+          _pending:      true,
+          _raw:          {},
         };
-        importItems.push({
-          action: "create",
-          product: local,
-          imagePreview: null,
-        });
+        importItems.push({ action: "create", product: local, imagePreview: null });
         created++;
       }
     }
@@ -316,7 +227,6 @@ export default function Products({
       return { created: 0, updated: 0 };
     }
 
-    // Single call — all DB work + one state update inside handleBatchImport
     onProgress(0, importItems.length);
     await onBatchImport(importItems);
     onProgress(importItems.length, importItems.length);
@@ -342,12 +252,7 @@ export default function Products({
       {error && (
         <div className="mb-2 text-[12px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 rounded-xl px-4 py-2.5 flex items-center justify-between">
           {error}
-          <button
-            onClick={() => setError(null)}
-            className="text-red-400 hover:text-red-600 ml-4"
-          >
-            ✕
-          </button>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-4">✕</button>
         </div>
       )}
 
@@ -375,6 +280,8 @@ export default function Products({
           onDelete={editProduct ? () => handleDelete(editProduct) : null}
           onClose={() => setShowForm(false)}
           saving={false}
+          conn={conn}
+          onQueueVariations={onQueueVariations}
         />
       )}
 

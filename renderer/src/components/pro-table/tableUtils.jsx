@@ -3,13 +3,12 @@ import { useState, useEffect, useRef } from 'react';
 // ── Layout constants ──────────────────────────────────────────────────────────
 export const GRID_STYLE = {
   display: 'grid',
-  gridTemplateColumns: '40px 2fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr',
+  gridTemplateColumns: '40px 2fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr',
 };
 
 export const CELL       = 'px-3 py-2.5 flex items-center';
 export const CELL_INNER = 'px-3 py-2.5 flex items-center';
 
-// Only Columns remains — Status/Stock/Category moved to filter panel
 export const FILTERS = ['Columns'];
 
 export const COL_HEADERS = [
@@ -20,11 +19,13 @@ export const COL_HEADERS = [
   { key: 'sale_price',    label: 'Sale'         },
   { key: 'stock',         label: 'Stock'        },
   { key: 'stock_status',  label: 'Stock Status' },
+  { key: 'type',          label: 'Type'         },
   { key: 'status',        label: 'Status'       },
 ];
 
 // Columns that can be hidden (name is always visible)
-export const TOGGLEABLE_COLS = ['sku', 'category', 'regular_price', 'sale_price', 'stock', 'stock_status', 'status'];
+// Order here defines grid column order
+export const TOGGLEABLE_COLS = ['sku', 'category', 'regular_price', 'sale_price', 'stock', 'stock_status', 'type', 'status'];
 
 export const DEFAULT_VISIBLE_COLS = {
   sku:           true,
@@ -33,6 +34,7 @@ export const DEFAULT_VISIBLE_COLS = {
   sale_price:    true,
   stock:         true,
   stock_status:  true,
+  type:          true,
   status:        true,
 };
 
@@ -52,7 +54,6 @@ export const STATUS_OPTIONS       = ['Live', 'Draft'];
 
 // ── Dynamic grid style based on visible cols ──────────────────────────────────
 export function buildGridStyle(visibleCols) {
-  // name col is always shown (2fr), then each visible extra col gets 1fr
   const extras = TOGGLEABLE_COLS.filter(k => visibleCols[k]);
   const cols   = ['40px', '2fr', ...extras.map(() => '1fr')];
   return { display: 'grid', gridTemplateColumns: cols.join(' ') };
@@ -153,6 +154,18 @@ export function Avatar({ name, color, active, image }) {
         </div>
       )}
     </div>
+  );
+}
+
+export function TypeBadge({ type }) {
+  const isVariable = type === 'variable';
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${
+      isVariable ? 'text-violet-600 dark:text-violet-400' : 'text-[#999] dark:text-white/30'
+    }`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${isVariable ? 'bg-violet-400' : 'bg-[#ccc] dark:bg-white/20'}`} />
+      {isVariable ? 'Variable' : 'Simple'}
+    </span>
   );
 }
 

@@ -9,7 +9,7 @@ import Placeholder from "./pages/Placeholder.jsx";
 import LicenseGate from "./components/LicenseGate.jsx";
 import { useProducts } from "./hooks/useProducts.js";
 import { useSync } from "./hooks/useSync.js";
-import { loadSettings, dbLoadOrders, dbSaveOrders } from "./services/woo.js";
+import { loadSettings, dbLoadOrders, dbSaveOrders, dbUpsertQueueItem } from "./services/woo.js";
 
 function resolveTheme(theme) {
   if (theme === "Dark") return "dark";
@@ -88,12 +88,12 @@ export default function App() {
 
   // ── Online/offline ────────────────────────────────────────────────────────
   useEffect(() => {
-    const up = () => setOnline(true);
+    const up   = () => setOnline(true);
     const down = () => setOnline(false);
-    window.addEventListener("online", up);
+    window.addEventListener("online",  up);
     window.addEventListener("offline", down);
     return () => {
-      window.removeEventListener("online", up);
+      window.removeEventListener("online",  up);
       window.removeEventListener("offline", down);
     };
   }, []);
@@ -134,12 +134,12 @@ export default function App() {
           if (!res?.ok || !res.data) {
             window.electronAPI
               .dbSaveProfile({
-                key: license.key,
-                plan: license.plan,
-                label: license.label,
-                features: license.features,
-                expiresAt: license.expiresAt,
-                user: license.user,
+                key:           license.key,
+                plan:          license.plan,
+                label:         license.label,
+                features:      license.features,
+                expiresAt:     license.expiresAt,
+                user:          license.user,
                 lastValidated: Date.now(),
               })
               .catch(() => {});
@@ -174,8 +174,6 @@ export default function App() {
         if (isEmpty && conn) {
           await doFetchProducts(conn);
         } else {
-          // DB has data (including imported products) OR no conn — either way
-          // loadFromDb() already populated the list, just stop the loading spinner.
           setProductLoading(false);
         }
       })
@@ -189,6 +187,16 @@ export default function App() {
     if (settings) doFetchProducts(settings);
   }, [settings, doFetchProducts]);
 
+  // ── Queue variations (called from ProductForm via Products page) ───────────
+  const handleQueueVariations = useCallback((product, dirtyVariations) => {
+    dirtyVariations.forEach(variation => {
+      const key  = `update_variation_${product.id}_${variation.id}`;
+      const item = { action: 'update_variation', productId: product.id, variation };
+      dbUpsertQueueItem(key, item).catch(() => {});
+      setPendingQueue(prev => ({ ...prev, [key]: item }));
+    });
+  }, [setPendingQueue]);
+
   // ── Settings close ────────────────────────────────────────────────────────
   const handleSettingsClose = useCallback(() => {
     setSettingsOpen(false);
@@ -199,8 +207,8 @@ export default function App() {
         if (s?.conn?.storeUrl && s?.conn?.consumerKey) {
           setSettings((prev) => {
             const changed =
-              prev?.storeUrl !== s.conn.storeUrl ||
-              prev?.consumerKey !== s.conn.consumerKey ||
+              prev?.storeUrl      !== s.conn.storeUrl      ||
+              prev?.consumerKey   !== s.conn.consumerKey   ||
               prev?.consumerSecret !== s.conn.consumerSecret;
             if (changed) {
               setFetched(false);
@@ -238,7 +246,9 @@ export default function App() {
             onRefresh={handleRefreshProducts}
             onQueueChange={handleQueueChange}
             onBatchImport={handleBatchImport}
+            onQueueVariations={handleQueueVariations}
             pendingQueue={pendingQueue}
+            conn={settings}
           />
         );
       case "Orders":

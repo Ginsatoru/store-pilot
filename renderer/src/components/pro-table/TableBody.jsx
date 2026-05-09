@@ -2,7 +2,7 @@ import React, { memo, useRef, useState, useEffect, useCallback } from 'react';
 import { RiInboxLine } from 'react-icons/ri';
 import {
   CELL, CELL_INNER,
-  Avatar, StatusBadge, StockStatusBadge,
+  Avatar, StatusBadge, StockStatusBadge, TypeBadge,
   STOCK_STATUS_OPTIONS, STATUS_OPTIONS,
   buildGridStyle,
 } from './tableUtils';
@@ -145,9 +145,9 @@ function SelectCell({ value, options, onCommit, onNavigate, isDirty, renderValue
 // ── Product row ───────────────────────────────────────────────────────────────
 
 const ProductRow = memo(({ product, isSelected, onRowClick, onToggleOne, dirtyFields, onCellCommit, onNavigate, visibleCols }) => {
-  const rowKey  = product.sku || product.id;
-  const isDirty = f => dirtyFields?.[f] !== undefined;
-  const merged  = { ...product, ...dirtyFields };
+  const rowKey    = product.sku || product.id;
+  const isDirty   = f => dirtyFields?.[f] !== undefined;
+  const merged    = { ...product, ...dirtyFields };
   const gridStyle = buildGridStyle(visibleCols);
 
   return (
@@ -179,7 +179,7 @@ const ProductRow = memo(({ product, isSelected, onRowClick, onToggleOne, dirtyFi
         </div>
       </div>
 
-      {/* Conditional columns */}
+      {/* Conditional columns — order matches TOGGLEABLE_COLS */}
       {visibleCols.sku && (
         <div className={CELL_INNER}>
           <span className="text-[11px] font-mono text-[#888] dark:text-white/40 truncate" title={product.sku}>
@@ -226,6 +226,12 @@ const ProductRow = memo(({ product, isSelected, onRowClick, onToggleOne, dirtyFi
             onCommit={v => onCellCommit(rowKey, 'stock_status', v)}
             onNavigate={dir => onNavigate(rowKey, 'stock_status', dir)}
             renderValue={v => <StockStatusBadge status={v} />} />
+        </div>
+      )}
+
+      {visibleCols.type && (
+        <div className={CELL_INNER}>
+          <TypeBadge type={product.type} />
         </div>
       )}
 
@@ -305,7 +311,7 @@ export default function TableBody({ loading, sorted, selected, onRowClick, onTog
               <div className="w-6 h-6 rounded bg-gray-100 dark:bg-white/10 flex-shrink-0" />
               <div className="h-3 rounded bg-gray-100 dark:bg-white/10 w-32" />
             </div>
-            {[50, 70, 55, 45, 40, 60, 50].map((w, j) => (
+            {[50, 70, 55, 45, 40, 60, 50, 50].map((w, j) => (
               <div key={j} className={CELL_INNER}><div className="h-3 rounded bg-gray-100 dark:bg-white/10" style={{ width: w }} /></div>
             ))}
           </div>

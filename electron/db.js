@@ -43,17 +43,24 @@ function initSchema() {
       data        TEXT NOT NULL,
       updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS variations (
+      id          TEXT PRIMARY KEY,
+      product_id  TEXT NOT NULL,
+      data        TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_variations_product_id ON variations(product_id);
   `);
 }
 
-// ── Migration: rebuild products table if it's missing the sku column ──────────
+// ── Migration ─────────────────────────────────────────────────────────────────
 function migrateSchema() {
   try {
     const cols = db.prepare("PRAGMA table_info(products)").all();
     const hasSkuCol = cols.some(c => c.name === 'sku');
-
     if (!hasSkuCol) {
-      // Old table exists without sku column — drop and recreate cleanly
       db.exec(`
         DROP TABLE IF EXISTS products;
         CREATE TABLE products (
@@ -63,6 +70,17 @@ function migrateSchema() {
         );
       `);
     }
+
+    // Ensure variations table exists (for users upgrading from older versions)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS variations (
+        id          TEXT PRIMARY KEY,
+        product_id  TEXT NOT NULL,
+        data        TEXT NOT NULL,
+        updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_variations_product_id ON variations(product_id);
+    `);
   } catch (e) {
     console.error('[db] migrateSchema error:', e.message);
   }
@@ -204,9 +222,62 @@ function saveProfile(data) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// ── Variations ────────────────────────────────────────────────────────────────
+function loadVariations(productId) {
+  try {
+    const rows = getDb()
+      .prepare('SELECT data FROM variations WHERE product_id = ? ORDER BY updated_at ASC')
+      .all(String(productId));
+    return { ok: true, data: rows.map(r => JSON.parse(r.data)) };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function saveVariations(productId, variations) {
+  try {
+    const pidStr = String(productId);
+    const tx = getDb().transaction((items) => {
+      // Remove variations no longer in the list
+      if (items.length === 0) {
+        getDb().prepare('DELETE FROM variations WHERE product_id = ?').run(pidStr);
+      } else {
+        const ids = items.map(v => String(v.id));
+        const placeholders = ids.map(() => '?').join(',');
+        getDb()
+          .prepare(`DELETE FROM variations WHERE product_id = ? AND id NOT IN (${placeholders})`)
+          .run(pidStr, ...ids);
+      }
+
+      const insert = getDb().prepare(`
+        INSERT INTO variations (id, product_id, data, updated_at)
+        VALUES (?, ?, ?, strftime('%s','now'))
+        ON CONFLICT(id) DO UPDATE SET
+          data       = excluded.data,
+          updated_at = excluded.updated_at
+      `);
+      for (const v of items) {
+        insert.run(String(v.id), pidStr, JSON.stringify(v));
+      }
+    });
+    tx(variations);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function clearVariations(productId) {
+  try {
+    if (productId) {
+      getDb().prepare('DELETE FROM variations WHERE product_id = ?').run(String(productId));
+    } else {
+      getDb().prepare('DELETE FROM variations').run();
+    }
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 module.exports = {
   loadProducts, saveProducts, clearProducts,
   loadQueue, upsertQueueItem, deleteQueueItem, clearQueue,
   loadOrders, saveOrders,
   loadProfile, saveProfile,
+  loadVariations, saveVariations, clearVariations,
 };

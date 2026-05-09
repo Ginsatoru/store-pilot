@@ -33,13 +33,20 @@ export const dbClearQueue      = ()          => api().dbClearQueue();
 export const dbLoadOrders  = ()       => api().dbLoadOrders();
 export const dbSaveOrders  = (orders) => api().dbSaveOrders(orders);
 
+// ── DB — Variations (offline safe, no guard) ──────────────────────────────────
+export const dbLoadVariations  = (productId)             => api().dbLoadVariations(productId);
+export const dbSaveVariations  = (productId, variations) => api().dbSaveVariations(productId, variations);
+export const dbClearVariations = (productId)             => api().dbClearVariations(productId);
+
 // ── WooCommerce (online required) ─────────────────────────────────────────────
-export const testConnection    = (settings)           => guard(() => api().wooTestConnection(settings));
-export const fetchProducts     = (settings, params)   => guard(() => api().wooFetchProducts(settings, params));
-export const createProduct     = (settings, data)     => guard(() => api().wooCreateProduct(settings, data));
-export const updateProduct     = (settings, id, data) => guard(() => api().wooUpdateProduct(settings, id, data));
-export const deleteProduct     = (settings, id)       => guard(() => api().wooDeleteProduct(settings, id));
-export const fetchOrders       = (settings, params)   => guard(() => api().wooFetchOrders(settings, params));
+export const testConnection  = (settings)                         => guard(() => api().wooTestConnection(settings));
+export const fetchProducts   = (settings, params)                 => guard(() => api().wooFetchProducts(settings, params));
+export const createProduct   = (settings, data)                   => guard(() => api().wooCreateProduct(settings, data));
+export const updateProduct   = (settings, id, data)               => guard(() => api().wooUpdateProduct(settings, id, data));
+export const deleteProduct   = (settings, id)                     => guard(() => api().wooDeleteProduct(settings, id));
+export const fetchOrders     = (settings, params)                 => guard(() => api().wooFetchOrders(settings, params));
+export const fetchVariations = (settings, productId)              => guard(() => api().wooFetchVariations(settings, productId));
+export const updateVariation = (settings, productId, varId, data) => guard(() => api().wooUpdateVariation(settings, productId, varId, data));
 
 // ── FTP (online required) ─────────────────────────────────────────────────────
 export const testFtpConnection = (settings) => guard(() => api().ftpTestConnection(settings));

@@ -24,16 +24,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbSaveOrders:  (orders) => ipcRenderer.invoke('db:saveOrders', orders),
 
   // DB — Profile
-  dbLoadProfile:  ()     => ipcRenderer.invoke('db:loadProfile'),
-  dbSaveProfile:  (data) => ipcRenderer.invoke('db:saveProfile', data),
+  dbLoadProfile: ()     => ipcRenderer.invoke('db:loadProfile'),
+  dbSaveProfile: (data) => ipcRenderer.invoke('db:saveProfile', data),
+
+  // DB — Variations
+  dbLoadVariations:  (productId)             => ipcRenderer.invoke('db:loadVariations', productId),
+  dbSaveVariations:  (productId, variations) => ipcRenderer.invoke('db:saveVariations', productId, variations),
+  dbClearVariations: (productId)             => ipcRenderer.invoke('db:clearVariations', productId),
 
   // WooCommerce
-  wooTestConnection: (settings)           => ipcRenderer.invoke('woo:testConnection', settings),
-  wooFetchProducts:  (settings, params)   => ipcRenderer.invoke('woo:fetchProducts', settings, params),
-  wooCreateProduct:  (settings, data)     => ipcRenderer.invoke('woo:createProduct', settings, data),
-  wooUpdateProduct:  (settings, id, data) => ipcRenderer.invoke('woo:updateProduct', settings, id, data),
-  wooDeleteProduct:  (settings, id)       => ipcRenderer.invoke('woo:deleteProduct', settings, id),
-  wooFetchOrders:    (settings, params)   => ipcRenderer.invoke('woo:fetchOrders', settings, params),
+  wooTestConnection:  (settings)                        => ipcRenderer.invoke('woo:testConnection', settings),
+  wooFetchProducts:   (settings, params)                => ipcRenderer.invoke('woo:fetchProducts', settings, params),
+  wooCreateProduct:   (settings, data)                  => ipcRenderer.invoke('woo:createProduct', settings, data),
+  wooUpdateProduct:   (settings, id, data)              => ipcRenderer.invoke('woo:updateProduct', settings, id, data),
+  wooDeleteProduct:   (settings, id)                    => ipcRenderer.invoke('woo:deleteProduct', settings, id),
+  wooFetchOrders:     (settings, params)                => ipcRenderer.invoke('woo:fetchOrders', settings, params),
+  wooFetchVariations: (settings, productId)             => ipcRenderer.invoke('woo:fetchVariations', settings, productId),
+  wooUpdateVariation: (settings, productId, varId, data) => ipcRenderer.invoke('woo:updateVariation', settings, productId, varId, data),
 
   // FTP
   ftpTestConnection: (settings) => ipcRenderer.invoke('ftp:testConnection', settings),

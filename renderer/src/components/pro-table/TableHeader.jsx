@@ -1,5 +1,4 @@
 import React from 'react';
-
 import { CELL, COL_HEADERS, TOGGLEABLE_COLS, buildGridStyle } from './tableUtils';
 
 export default function TableHeader({
@@ -25,18 +24,22 @@ export default function TableHeader({
           />
         </div>
         {visibleHeaders.map(col => {
-          // Name col: checkbox(40px) + pl-3 + avatar(w-6=24px) + gap-2.5(10px) = offset ~46px from cell start
-          // Other cols: data uses px-3 (12px left pad)
           const isName = col.key === 'name';
+          const isSorted = sortField === col.key;
           return (
             <button
               key={col.key}
               onClick={() => onSort(col.key)}
-              className={`relative flex items-center py-2.5 text-[11px] font-medium text-[#888] dark:text-white/30 hover:text-[#333] dark:hover:text-white/60 transition-colors text-left group w-full ${
+              className={`relative flex items-center gap-1 py-2.5 text-[11px] font-medium text-[#888] dark:text-white/30 hover:text-[#333] dark:hover:text-white/60 transition-colors text-left group w-full ${
                 isName ? 'pl-[58px] pr-2' : 'pl-2.5 pr-3'
-              }`}
+              } ${isSorted ? 'text-[#333] dark:text-white/60' : ''}`}
             >
               <span>{col.label}</span>
+              {isSorted && (
+                <span className="text-[10px] text-[#aaa] dark:text-white/30">
+                  {sortDir === 'asc' ? '↑' : '↓'}
+                </span>
+              )}
             </button>
           );
         })}

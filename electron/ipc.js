@@ -47,6 +47,11 @@ function registerIpcHandlers() {
   ipcMain.handle('db:loadProfile', () => db.loadProfile());
   ipcMain.handle('db:saveProfile', (_e, data) => db.saveProfile(data));
 
+  // Variations (SQLite)
+  ipcMain.handle('db:loadVariations',  (_e, productId) => db.loadVariations(productId));
+  ipcMain.handle('db:saveVariations',  (_e, productId, variations) => db.saveVariations(productId, variations));
+  ipcMain.handle('db:clearVariations', (_e, productId) => db.clearVariations(productId));
+
   // WooCommerce
   ipcMain.handle('woo:testConnection', async (_e, settings) => {
     try {
@@ -116,6 +121,43 @@ function registerIpcHandlers() {
       }
 
       return { ok: true, data: allProducts };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // Fetch all variations for a product across all pages
+  ipcMain.handle('woo:fetchVariations', async (_e, settings, productId) => {
+    try {
+      const perPage = 100;
+      let allVariations = [];
+      let page = 1;
+
+      while (true) {
+        const res = await wooRequestWithRetry(
+          settings,
+          `/products/${productId}/variations?per_page=${perPage}&page=${page}&orderby=id&order=asc`
+        );
+        if (!res.ok) return res;
+
+        const batch = res.data || [];
+        allVariations = allVariations.concat(batch);
+
+        if (batch.length < perPage) break;
+        page++;
+      }
+
+      return { ok: true, data: allVariations };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // Update a single variation
+  ipcMain.handle('woo:updateVariation', async (_e, settings, productId, variationId, data) => {
+    try {
+      return await wooRequestWithRetry(
+        settings,
+        `/products/${productId}/variations/${variationId}`,
+        'PUT',
+        data
+      );
     } catch (e) { return { ok: false, error: e.message }; }
   });
 

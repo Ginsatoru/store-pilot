@@ -4,7 +4,7 @@ import {
   dbLoadProducts, dbSaveProducts,
   dbLoadQueue, dbDeleteQueueItem,
   dbSaveOrders,
-  ftpUploadImage, createProduct, updateProduct, deleteProduct,
+  ftpUploadImage, createProduct, updateProduct, deleteProduct, updateVariation,
 } from '../services/woo';
 import { normalizeProduct } from './useProducts';
 
@@ -59,6 +59,18 @@ function buildWooPayload(product, imageUrl) {
   };
 }
 
+function buildVariationPayload(variation) {
+  return {
+    sku:            variation.sku || '',
+    regular_price:  String(variation.regular_price || 0),
+    sale_price:     variation.sale_price && Number(variation.sale_price) > 0
+                      ? String(variation.sale_price) : '',
+    stock_quantity: variation.stock_quantity != null ? Number(variation.stock_quantity) : null,
+    stock_status:   variation.stock_status || 'instock',
+    manage_stock:   variation.manage_stock ?? true,
+  };
+}
+
 export function useSync({ settingsRef, setProductList, setPendingQueue, setOrderList, syncSettings }) {
   const [syncing, setSyncing] = useState(false);
   const [syncLog, setSyncLog] = useState([]);
@@ -73,14 +85,12 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
   const section = useCallback((msg) => log('section', msg), [log]);
 
   const stopSync = useCallback(() => {
-    if (syncingRef.current) {
-      stopRequestedRef.current = true;
-    }
+    if (syncingRef.current) stopRequestedRef.current = true;
   }, []);
 
   const runSync = useCallback(async () => {
     if (syncingRef.current) return;
-    syncingRef.current    = true;
+    syncingRef.current       = true;
     stopRequestedRef.current = false;
     setSyncing(true);
     setSyncLog([]);
@@ -88,29 +98,29 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
     try {
       let s;
       try { s = await loadSettings(); }
-      catch (e) {
-        log('err', 'Failed to load settings: ' + e.message);
-        return;
-      }
+      catch (e) { log('err', 'Failed to load settings: ' + e.message); return; }
 
-      const conn = settingsRef.current;
+      const conn        = settingsRef.current;
       const ftpSettings = s?.conn?.ftpHost ? {
         host: s.conn.ftpHost, port: s.conn.ftpPort || '21',
         user: s.conn.ftpUser, pass: s.conn.ftpPass,
         path: s.conn.ftpPath || 'public_html/wp-content/uploads/',
       } : null;
 
-      // ── Products ───────────────────────────────────────────────────────────
-      const qRes = await dbLoadQueue();
+      // ── Load & split queue ─────────────────────────────────────────────────
+      const qRes  = await dbLoadQueue();
       const queue = (qRes.ok && qRes.data) ? qRes.data : {};
-      const entries = Object.entries(queue);
 
+      const productEntries   = Object.entries(queue).filter(([, item]) => item.action !== 'update_variation');
+      const variationEntries = Object.entries(queue).filter(([, item]) => item.action === 'update_variation');
+
+      // ── Products ───────────────────────────────────────────────────────────
       section('Products');
 
-      if (entries.length === 0) {
+      if (productEntries.length === 0) {
         log('info', 'No pending changes.');
       } else {
-        log('info', `${entries.length} change(s) · batches of ${BATCH_SIZE}`);
+        log('info', `${productEntries.length} change(s) · batches of ${BATCH_SIZE}`);
 
         const pRes = await dbLoadProducts();
         let latestProducts = pRes.ok ? [...pRes.data] : [];
@@ -179,7 +189,6 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
                 await dbDeleteQueueItem(key);
                 return { key, action, product, ok: true };
               }
-              // Treat "already gone" as success — product no longer exists on server
               const alreadyGone =
                 res.status === 404 ||
                 (typeof res.error === 'string' &&
@@ -196,8 +205,7 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
           }
         };
 
-        for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-          // Check stop before each batch
+        for (let i = 0; i < productEntries.length; i += BATCH_SIZE) {
           if (stopRequestedRef.current) {
             log('info', 'Sync stopped by user.');
             await dbSaveProducts(latestProducts);
@@ -206,9 +214,9 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
             return;
           }
 
-          const batch        = entries.slice(i, i + BATCH_SIZE);
+          const batch        = productEntries.slice(i, i + BATCH_SIZE);
           const batchNum     = Math.floor(i / BATCH_SIZE) + 1;
-          const totalBatches = Math.ceil(entries.length / BATCH_SIZE);
+          const totalBatches = Math.ceil(productEntries.length / BATCH_SIZE);
 
           log('info', `Batch ${batchNum}/${totalBatches} (${batch.length} items)`, 'batch');
 
@@ -216,7 +224,6 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
 
           for (const result of results) {
             if (!result) continue;
-
             const name = result.product?.name || `#${result.product?.id}`;
 
             if (!result.ok) {
@@ -256,8 +263,7 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
           await dbSaveProducts(latestProducts);
         }
 
-        // Re-read from DB as single source of truth and update UI
-        const finalDbRes = await dbLoadProducts();
+        const finalDbRes    = await dbLoadProducts();
         const finalProducts = finalDbRes.ok ? finalDbRes.data : latestProducts;
         setProductList([...finalProducts]);
 
@@ -267,11 +273,58 @@ export function useSync({ settingsRef, setProductList, setPendingQueue, setOrder
         );
       }
 
-      // ── Orders ─────────────────────────────────────────────────────────────
-      if (stopRequestedRef.current) {
-        log('info', 'Sync stopped by user.');
-        return;
+      // ── Variations ─────────────────────────────────────────────────────────
+      if (variationEntries.length > 0) {
+        if (stopRequestedRef.current) { log('info', 'Sync stopped by user.'); return; }
+
+        section('Variations');
+        log('info', `${variationEntries.length} variation change(s)`);
+
+        let varSuccess = 0;
+        let varFail    = 0;
+
+        for (let i = 0; i < variationEntries.length; i += BATCH_SIZE) {
+          if (stopRequestedRef.current) { log('info', 'Sync stopped by user.'); return; }
+
+          const batch = variationEntries.slice(i, i + BATCH_SIZE);
+
+          const results = await Promise.all(batch.map(async ([key, item]) => {
+            const { productId, variation } = item;
+            const label = variation.attributes?.map(a => a.option).filter(Boolean).join('/') || `#${variation.id}`;
+
+            if (!isValidWooId(productId) || !isValidWooId(variation?.id)) {
+              await dbDeleteQueueItem(key);
+              return { key, ok: false, error: `Invalid IDs for variation ${label}` };
+            }
+
+            try {
+              const payload = buildVariationPayload(variation);
+              const res     = await updateVariation(conn, productId, variation.id, payload);
+              if (res.ok) {
+                await dbDeleteQueueItem(key);
+                return { key, ok: true, label };
+              }
+              return { key, ok: false, error: `${label}: ${res.error}` };
+            } catch (e) {
+              return { key, ok: false, error: `${label}: ${e.message}` };
+            }
+          }));
+
+          for (const r of results) {
+            if (r.ok) { log('ok',  `Variation ${r.label} updated`); varSuccess++; }
+            else       { log('err', r.error);                        varFail++;    }
+            setPendingQueue(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+          }
+        }
+
+        log(
+          varFail === 0 ? 'ok' : 'info',
+          `${varSuccess} variation(s) synced${varFail > 0 ? `, ${varFail} failed` : ''}`
+        );
       }
+
+      // ── Orders ─────────────────────────────────────────────────────────────
+      if (stopRequestedRef.current) { log('info', 'Sync stopped by user.'); return; }
 
       section('Orders');
       try {
